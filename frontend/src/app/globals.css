@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  @apply h-full bg-surface font-sans text-slate-200 antialiased;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-newsreader), Georgia, serif;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: theme("colors.surface.border") transparent;
+}
+
+.prose-chat p {
+  @apply my-2 leading-relaxed;
+}
+.prose-chat ul {
+  @apply my-2 list-disc space-y-1 pl-5;
+}
+.prose-chat ol {
+  @apply my-2 list-decimal space-y-1 pl-5;
+}
+.prose-chat strong {
+  @apply font-medium text-slate-100;
+}
+.prose-chat h1,
+.prose-chat h2,
+.prose-chat h3 {
+  @apply mt-3 mb-1 text-base text-slate-100;
+}
+.prose-chat code {
+  @apply bg-surface-overlay px-1 py-0.5 text-xs;
+}

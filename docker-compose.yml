@@ -1,0 +1,54 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fantasy}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fantasy}
+      POSTGRES_DB: ${POSTGRES_DB:-fantasy_ai}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fantasy} -d ${POSTGRES_DB:-fantasy_ai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-fantasy}:${POSTGRES_PASSWORD:-fantasy}@db:5432/${POSTGRES_DB:-fantasy_ai}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me-please-use-32-plus-chars}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      CREDENTIALS_KEY: ${CREDENTIALS_KEY:-}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DEMO_ENABLED: ${DEMO_ENABLED:-true}
+    ports:
+      - "8000:8000"
+    volumes:
+      - backend_cache:/app/.cache
+      - backend_data:/app/data
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:
+  backend_cache:
+  backend_data:

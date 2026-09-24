@@ -1,0 +1,30 @@
+# Secrets
+.env
+.env.local
+*.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+backend/.cache/
+backend/.credentials_key
+backend/data/nfl_data.json
+backend/*.db
+backend/*.db-journal
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
