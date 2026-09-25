@@ -43,6 +43,7 @@ from app.repositories import (
 )
 from app.schemas.league import (
     LeagueDetailOut,
+    LeagueMatchupOut,
     LeagueOut,
     MatchupOut,
     MatchupSideOut,
@@ -63,6 +64,51 @@ from app.schemas.league import (
 )
 
 log = get_logger(__name__)
+
+
+def _player_ids(items: list[dict]) -> list[UUID]:
+    ids: list[UUID] = []
+    for item in items:
+        raw = item.get("player_id")
+        if not raw:
+            continue
+        try:
+            ids.append(UUID(str(raw)))
+        except ValueError:
+            continue
+    return ids
+
+
+def _with_faces(view: TransactionOut, players: dict[UUID, Player]) -> TransactionOut:
+    def paint(items: list[dict]) -> list[dict]:
+        painted = []
+        for item in items:
+            row = dict(item)
+            player = _known(players, row.get("player_id"))
+            row["headshot_url"] = headshot_url(player) if player else row.get("headshot_url")
+            painted.append(row)
+        return painted
+
+    return view.model_copy(update={"adds": paint(view.adds), "drops": paint(view.drops)})
+
+
+def _known(players: dict[UUID, Player], raw: object) -> Player | None:
+    if not raw:
+        return None
+    try:
+        return players.get(UUID(str(raw)))
+    except ValueError:
+        return None
+
+
+def _matchup_status(week: int, current_week: int, points: float, opponent_points: float | None) -> str:
+    if opponent_points is None:
+        return "bye"
+    if points == 0 and opponent_points == 0:
+        return "upcoming"
+    if week < current_week:
+        return "final"
+    return "in_progress"
 
 
 class LeagueContextService:
@@ -636,25 +682,69 @@ class LeagueContextService:
                     projected_points=opp_view.projected_points,
                     starters=opp_view.starters,
                 )
-        if opponent is None:
-            status = "bye"
-        elif m.points == 0 and opponent.points == 0:
-            status = "upcoming"
-        elif week < league.current_week:
-            status = "final"
-        else:
-            status = "in_progress"
         view = MatchupOut(
             week=week,
             is_bye=opponent is None,
             user=user,
             opponent=opponent,
-            status=status,
+            status=_matchup_status(week, league.current_week, m.points, opponent.points if opponent else None),
             calls=_slot_calls(user, opponent),
             games=await self._nfl_games(league.season, week),
         )
         await self.attach_live_stat_lines(league, view)
         return view
+
+    async def week_matchups(self, league: League, week: int | None = None) -> list[LeagueMatchupOut]:
+        """Every game this week. The user's matchup is first."""
+        week = week or league.current_week
+        rows = await self.matchups.list_for_week(league.id, week)
+        user = await self.user_team(league)
+        user_id = user.id if user else None
+        by_team = {row.team_id: row for row in rows}
+        teams = {team.id: team for team in await self.teams.list_for_league(league.id)}
+        views: dict[UUID, TeamOut] = {}
+
+        async def side(team_id: UUID, points: float) -> MatchupSideOut | None:
+            team = teams.get(team_id)
+            if team is None:
+                return None
+            if team_id not in views:
+                views[team_id] = await self.team_out(league, team, week)
+            view = views[team_id]
+            return MatchupSideOut(
+                team=view.team, points=points, projected_points=view.projected_points, starters=view.starters
+            )
+
+        seen: set[UUID] = set()
+        games: list[LeagueMatchupOut] = []
+        for row in rows:
+            if row.team_id in seen:
+                continue
+            partner = by_team.get(row.opponent_team_id) if row.opponent_team_id else None
+            primary, other = row, partner
+            if user_id and other is not None and other.team_id == user_id:
+                primary, other = other, row
+            seen.add(primary.team_id)
+            if other is not None:
+                seen.add(other.team_id)
+            team_side = await side(primary.team_id, primary.points)
+            if team_side is None:
+                continue
+            opponent_side = await side(other.team_id, other.points) if other is not None else None
+            games.append(
+                LeagueMatchupOut(
+                    week=week,
+                    is_bye=opponent_side is None,
+                    involves_user=user_id is not None and user_id in {primary.team_id, other.team_id if other else None},
+                    status=_matchup_status(
+                        week, league.current_week, team_side.points, opponent_side.points if opponent_side else None
+                    ),
+                    team=team_side,
+                    opponent=opponent_side,
+                )
+            )
+        games.sort(key=lambda game: (not game.involves_user, game.team.team.name))
+        return games
 
     async def attach_live_stat_lines(self, league: League, view: MatchupOut) -> None:
         """Counting stats for starters whose NFL game is in progress this week."""
@@ -700,6 +790,38 @@ class LeagueContextService:
             opponent_team = await self.teams.get(league.id, view.opponent.team.id)
             if opponent_team:
                 sides[opponent_team.external_team_id] = view.opponent
+        await self._paint_live_points(league, view.week, sides, raw_sides)
+        view.status = _matchup_status(
+            view.week,
+            league.current_week,
+            view.user.points,
+            view.opponent.points if view.opponent else None,
+        )
+
+    async def apply_live_week_points(self, league: League, games: list[LeagueMatchupOut], raw_sides: list[dict]) -> None:
+        teams = {team.id: team for team in await self.teams.list_for_league(league.id)}
+        sides: dict[str, MatchupSideOut] = {}
+        for game in games:
+            home = teams.get(game.team.team.id)
+            if home:
+                sides[home.external_team_id] = game.team
+            if game.opponent:
+                away = teams.get(game.opponent.team.id)
+                if away:
+                    sides[away.external_team_id] = game.opponent
+        week = games[0].week if games else league.current_week
+        await self._paint_live_points(league, week, sides, raw_sides)
+        for game in games:
+            game.status = _matchup_status(
+                game.week,
+                league.current_week,
+                game.team.points,
+                game.opponent.points if game.opponent else None,
+            )
+
+    async def _paint_live_points(
+        self, league: League, week: int, sides: dict[str, MatchupSideOut], raw_sides: list[dict]
+    ) -> None:
         external_ids: set[str] = set()
         incoming: dict[str, dict] = {}
         for raw in raw_sides:
@@ -727,46 +849,55 @@ class LeagueContextService:
             for slot in side.starters:
                 if slot.player and str(slot.player.id) in points_by_player:
                     slot.points = points_by_player[str(slot.player.id)]
-            row = await self.matchups.get_for_team(league.id, view.week, side.team.id)
+            row = await self.matchups.get_for_team(league.id, week, side.team.id)
             if row is not None:
                 row.points = side.points
                 row.player_points = points_by_player
-        if view.opponent is None:
-            view.status = "bye"
-        elif view.user.points == 0 and view.opponent.points == 0:
-            view.status = "upcoming"
-        elif view.week < league.current_week:
-            view.status = "final"
-        else:
-            view.status = "in_progress"
         await self.session.commit()
 
     # ---- standings / transactions ----------------------------------------------
 
+    def _standings_order(self, teams: list[FantasyTeam]) -> list[FantasyTeam]:
+        return sorted(teams, key=lambda t: (-(t.wins + 0.5 * t.ties), -t.points_for, t.name))
+
     async def standings(self, league: League) -> list[StandingsRowOut]:
         teams = await self.teams.list_for_league(league.id)
-        ordered = sorted(teams, key=lambda t: (-(t.wins + 0.5 * t.ties), -t.points_for))
         return [
             StandingsRowOut(**self.team_summary(t, league).model_dump(), rank=i + 1)
-            for i, t in enumerate(ordered)
+            for i, t in enumerate(self._standings_order(teams))
         ]
+
+    async def league_rosters(self, league: League, week: int | None = None) -> list[TeamOut]:
+        """Every roster in the league, in standings order."""
+        week = week or league.current_week
+        teams = self._standings_order(await self.teams.list_for_league(league.id))
+        return [await self.team_out(league, team, week) for team in teams]
 
     async def recent_transactions(self, league: League, limit: int = 25) -> list[TransactionOut]:
         team = await self.user_team(league)
         rows = await self.transactions.list_recent(league.id, limit)
-        return [self._tx_out(t, team) for t in rows]
+        return await self._tx_views(rows, team)
 
     async def league_trades(self, league: League) -> list[TransactionOut]:
         team = await self.user_team(league)
         rows = await self.transactions.list_trades(league.id)
-        return [self._tx_out(t, team) for t in rows]
+        return await self._tx_views(rows, team)
 
     async def get_trade(self, league: League, transaction_id: UUID) -> TransactionOut:
         team = await self.user_team(league)
         row = await self.transactions.get(league.id, transaction_id)
         if row is None or row.type != "trade":
             raise NotFoundError("That trade is not in this league.")
-        return self._tx_out(row, team)
+        return (await self._tx_views([row], team))[0]
+
+    async def _tx_views(self, rows: list[Transaction], user_team: FantasyTeam | None) -> list[TransactionOut]:
+        views = [self._tx_out(row, user_team) for row in rows]
+        ids: list[UUID] = []
+        for view in views:
+            ids.extend(_player_ids(view.adds))
+            ids.extend(_player_ids(view.drops))
+        players = await self.players.get_many(ids)
+        return [_with_faces(view, players) for view in views]
 
     @staticmethod
     def _tx_out(t: Transaction, user_team: FantasyTeam | None) -> TransactionOut:

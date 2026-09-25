@@ -8,7 +8,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { Brand } from "./brand";
-import { StatusDot } from "./ui/badge";
 import { Select } from "./ui/input";
 
 export const NAV = [
@@ -70,8 +69,7 @@ export function Sidebar() {
       )}
       {selected ? (
         <div className="mt-2 flex items-center justify-between gap-2 px-1 text-[11px] text-slate-500">
-          <span className="flex items-center gap-2">
-            <StatusDot status={selected.sync_status} />
+          <span>
             {PROVIDER_LABELS[selected.provider] ?? selected.provider} · Week {selected.current_week}
           </span>
           <Link href="/multibox" className="shrink-0 text-brand hover:underline">

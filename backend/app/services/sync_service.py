@@ -57,7 +57,20 @@ class SyncService:
             raise
         return league
 
-    async def apply_snapshot(self, league: League, snapshot: ImportedLeagueSnapshot) -> None:
+    async def refresh_live(self, league: League, provider: FantasyProvider) -> None:
+        """Pull the current league from the provider. Players already stored stay; rostered ones update."""
+        snapshot = await provider.fetch_league_snapshot(league.external_league_id)
+        await self.apply_snapshot(league, snapshot, referenced_only=True)
+        now = datetime.now(UTC)
+        league.last_synced_at = now
+        league.sync_status = SyncStatus.SUCCESS
+        league.sync_error = None
+        league.fantasy_account.last_synced_at = now
+        await self.session.commit()
+
+    async def apply_snapshot(
+        self, league: League, snapshot: ImportedLeagueSnapshot, *, referenced_only: bool = False
+    ) -> None:
         provider = snapshot.provider.value
         details = snapshot.league
 
@@ -87,7 +100,7 @@ class SyncService:
 
         to_persist: dict[str, PlayerData] = {}
         for ext_id, pdata in snapshot.players.items():
-            if ext_id in referenced or pdata.is_fantasy_relevant:
+            if ext_id in referenced or (not referenced_only and pdata.is_fantasy_relevant):
                 to_persist[ext_id] = pdata
         for ext_id in referenced - set(to_persist):
             # Referenced but missing from the catalogue: keep a placeholder so FK holds.

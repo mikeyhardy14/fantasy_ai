@@ -75,6 +75,11 @@ async def test_demo_league_dashboard_and_recommendations(client, auth_headers):
     assert len(standings) == 12
     matchup = (await client.get(f"/api/leagues/{league_id}/matchup", headers=auth_headers)).json()
     assert matchup["opponent"] and matchup["user"]["projected_points"] is not None
+    slate = (await client.get(f"/api/leagues/{league_id}/matchups", headers=auth_headers)).json()
+    assert len(slate) == 6
+    assert sum(1 for game in slate if game["involves_user"]) == 1
+    assert slate[0]["involves_user"]
+    assert all(game["opponent"] and game["team"]["team"]["name"] for game in slate)
 
     # Idempotent re-seed
     again = await client.post("/api/demo/league", headers=auth_headers)
@@ -118,7 +123,7 @@ async def test_waiver_suggestions_do_not_offer_lineup_writes(client, auth_header
     assert "Spare Tight" in resp.message
     names = [spec["function"]["name"] for spec in llm.calls[0]["tools"]]
     assert "get_available_players" in names
-    assert "change_lineup" not in names and "set_lineup" not in names
+    assert "change_lineup" not in names and "set_lineup" not in names and "claim_player" not in names
 
 
 async def test_chat_fallback_and_validation(client, auth_headers):
@@ -163,6 +168,11 @@ async def test_other_team_roster_is_readable(client, auth_headers, session, stat
     ctx = await build_tool_context(session, owner.id, UUID(league_id), LeagueContextService(session, state.nfl_data))
     roster = json.loads(await league_tool_registry.execute("get_team_roster", {"team_id": other["id"]}, ctx))
     assert roster["team"] == other["name"] and roster["is_user"] is False and roster["starters"]
+    league_rosters = json.loads(await league_tool_registry.execute("get_league_rosters", {}, ctx))
+    names = {row["team"] for row in league_rosters["teams"]}
+    assert other["name"] in names
+    assert any(row["is_user"] for row in league_rosters["teams"])
+    assert all(row["starters"] for row in league_rosters["teams"])
 
 
 async def test_tool_context_authorization(client, auth_headers, session, state: AppState):
@@ -202,7 +212,7 @@ async def test_all_tools_execute_on_demo_league(client, auth_headers, session, s
         ("get_team", {}), ("get_league_settings", {}), ("get_current_matchup", {}), ("get_player", {"player_id": pid}),
         ("get_player_stats", {"player_id": pid}), ("get_available_players", {"position": "RB"}),
         ("get_recent_transactions", {}), ("compare_players", {"player_ids": [pid, pid2]}), ("get_roster_needs", {}),
-        ("get_standings", {}), ("get_recommendations", {}), ("get_slot_options", {"slot": "FLEX"}),
+        ("get_standings", {}), ("get_league_rosters", {}), ("get_recommendations", {}), ("get_slot_options", {"slot": "FLEX"}),
         ("search_players", {"query": roster["starters"][0]["name"].split()[0]}),
     ]:
         out = json.loads(await league_tool_registry.execute(name, args, ctx))
@@ -440,6 +450,50 @@ async def test_lineup_tools_name_the_player_and_leave_the_write_to_the_service(c
     assert applied["verified"] is True
     assert len(ctx.writes.moves) == 1
     assert ctx.pending_lineups == []
+
+
+async def test_claim_player_waits_for_approval_and_does_not_write(client, auth_headers, session, state: AppState):
+    from uuid import UUID
+
+    league_id = await seed_demo(client, auth_headers)
+    owner = await UserRepository(session).get_by_email("mike@example.com")
+    ctx = await build_tool_context(session, owner.id, UUID(league_id), LeagueContextService(session, state.nfl_data))
+    available = json.loads(await league_tool_registry.execute("get_available_players", {"position": "RB", "limit": 5}, ctx))
+    roster = json.loads(await league_tool_registry.execute("get_roster", {}, ctx))
+    add_name = available["players"][0]["name"]
+    drop_name = roster["bench"][0]["name"]
+
+    class Recorder:
+        def __init__(self):
+            self.adds = []
+
+        async def add_player(self, league, body):
+            self.adds.append(body)
+
+    ctx.writes = Recorder()
+    ctx.auto_approve = True
+    held = json.loads(
+        await league_tool_registry.execute(
+            "claim_player", {"add_name": add_name, "drop_name": drop_name}, ctx
+        )
+    )
+    assert held["pending_approval"] is True
+    assert held["verified"] is False
+    assert "was not changed" in held["message"]
+    assert add_name in held["summary"] and drop_name in held["summary"]
+    assert ctx.writes.adds == []
+    claim = ctx.pending_claims[0]
+    assert claim.add_player_name == add_name
+    assert claim.drop_player_name == drop_name
+
+    dropped = json.loads(await league_tool_registry.execute("claim_player", {"drop_name": drop_name}, ctx))
+    assert dropped["pending_approval"] is True
+    assert ctx.pending_claims[-1].add_player_id is None
+    assert ctx.pending_claims[-1].drop_player_name == drop_name
+    assert ctx.writes.adds == []
+
+    missing = json.loads(await league_tool_registry.execute("claim_player", {"add_name": "Nobody Special"}, ctx))
+    assert "available" in missing["error"]
 
 
 def _numbered_slot(slots: list[str], index: int) -> str:

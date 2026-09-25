@@ -31,6 +31,7 @@ from app.schemas.league import (
     LineupUpdateRequest,
     LineupUpdateResponse,
     PlayerOut,
+    ProposeTradeResponse,
     RosterMoveRequest,
 )
 from app.services.league_context import LeagueContextService
@@ -356,28 +357,113 @@ class SleeperWriteService:
             message=_move_message(seat.name, where, confirmed_public),
         )
 
+    async def propose_trade(self, league: League, give: list[UUID], receive: list[UUID]) -> ProposeTradeResponse:
+        """Send a player trade offer to one other manager. It is not accepted here."""
+        if league.provider != Provider.SLEEPER:
+            raise ValidationFailed("Proposing a trade is only available for Sleeper leagues.")
+        if len(set(give)) != len(give) or len(set(receive)) != len(receive):
+            raise ValidationFailed("Each player can only be in the offer once.")
+        if set(give) & set(receive):
+            raise ValidationFailed("A player cannot be on both sides of the offer.")
+        deadline = league.league_settings.get("trade_deadline")
+        if deadline is not None and league.current_week > int(deadline):
+            raise ValidationFailed(f"The trade deadline was week {deadline}.")
+        team = await self.context.user_team(league)
+        if team is None:
+            raise NotFoundError("We could not find your team in this league.")
+        rostered = await self.rosters.list_for_league(league.id, league.current_week)
+        by_player: dict[UUID, RosterEntry] = {}
+        for entry in rostered:
+            by_player.setdefault(entry.player_id, entry)
+
+        give_entries: list[RosterEntry] = []
+        for player_id in give:
+            entry = by_player.get(player_id)
+            if entry is None or entry.fantasy_team_id != team.id:
+                raise ValidationFailed("You can only trade away players on your roster.")
+            give_entries.append(entry)
+
+        receive_entries: list[RosterEntry] = []
+        owners: set[UUID] = set()
+        for player_id in receive:
+            entry = by_player.get(player_id)
+            if entry is None:
+                raise ValidationFailed("Receive players who are on a roster in this league.")
+            if entry.fantasy_team_id == team.id:
+                raise ValidationFailed("You already have one of the players you want to receive.")
+            owners.add(entry.fantasy_team_id)
+            receive_entries.append(entry)
+        if len(owners) != 1:
+            raise ValidationFailed("Receive players from one team. An offer goes to one manager.")
+
+        opponent = await self.context.teams.get(league.id, next(iter(owners)))
+        if opponent is None:
+            raise NotFoundError("We could not find that team in this league.")
+        if not league.fantasy_account.encrypted_credentials:
+            raise ValidationFailed("Save your Sleeper token in Settings before sending a trade.")
+        token = self._token_for(league.fantasy_account)
+        graphql = SleeperGraphQL(self.graphql_url, token)
+        try:
+            tx = await graphql.propose_trade(
+                league_id=league.external_league_id,
+                my_roster_id=_roster_id(team.external_team_id),
+                their_roster_id=_roster_id(opponent.external_team_id),
+                give_player_ids=[_sleeper_id(entry) for entry in give_entries],
+                receive_player_ids=[_sleeper_id(entry) for entry in receive_entries],
+            )
+        except ProviderAuthError as exc:
+            raise ValidationFailed(str(exc.message)) from exc
+        except ProviderError as exc:
+            raise ValidationFailed(str(exc.message)) from exc
+
+        status = str(tx.get("status") or "pending")
+        sent = ", ".join(entry.player.name for entry in give_entries)
+        got = ", ".join(entry.player.name for entry in receive_entries)
+        return ProposeTradeResponse(
+            message=f"Offer sent to {opponent.name}: {sent} for {got}. They accept it in Sleeper.",
+            status=status,
+            transaction_id=str(tx["transaction_id"]) if tx.get("transaction_id") else None,
+            opponent_name=opponent.name,
+        )
+
     async def add_player(self, league: League, body: AddPlayerRequest) -> LineupUpdateResponse:
-        """Add a player nobody in the league owns onto the user's bench."""
+        """Add a free agent, drop a rostered player, or do both."""
         if league.provider != Provider.SLEEPER:
             raise ValidationFailed("Adding a player is only available for Sleeper leagues.")
+        if body.player_id is None and body.drop_player_id is None:
+            raise ValidationFailed("Choose a player to add or a player to drop.")
         week = league.current_week
         team = await self.context.user_team(league)
         if team is None:
             raise NotFoundError("We could not find your team in this league.")
-        player = await self.context.players.get(body.player_id)
-        if player is None:
-            raise NotFoundError("Player not found.")
-        external_id = player.external_id_for(Provider.SLEEPER)
-        if not external_id:
-            raise ValidationFailed(f"{player.name} has no Sleeper id, so they cannot be added.")
-
+        player = None
+        external_id = None
         rostered = await self.rosters.list_for_league(league.id, week)
-        if any(entry.player_id == player.id for entry in rostered):
-            raise ValidationFailed(f"Someone already has {player.name}.")
-        cap = league.roster_settings.get("max_roster_size")
+        if body.player_id is not None:
+            player = await self.context.players.get(body.player_id)
+            if player is None:
+                raise NotFoundError("Player not found.")
+            external_id = player.external_id_for(Provider.SLEEPER)
+            if not external_id:
+                raise ValidationFailed(f"{player.name} has no Sleeper id, so they cannot be added.")
+            if any(entry.player_id == player.id for entry in rostered):
+                raise ValidationFailed(f"Someone already has {player.name}.")
         mine = [entry for entry in rostered if entry.fantasy_team_id == team.id]
-        if cap is not None and len(mine) >= int(cap):
-            raise ValidationFailed("Your roster is full. Drop someone before adding a player.")
+        drop_entry: RosterEntry | None = None
+        drop_external: str | None = None
+        if body.drop_player_id is not None:
+            if player is not None and body.drop_player_id == player.id:
+                raise ValidationFailed("Choose someone else to drop.")
+            drop_entry = next((entry for entry in mine if entry.player_id == body.drop_player_id), None)
+            if drop_entry is None:
+                raise ValidationFailed("That player is not on your roster.")
+            drop_external = drop_entry.player.external_id_for(Provider.SLEEPER)
+            if not drop_external:
+                raise ValidationFailed(f"{drop_entry.player.name} has no Sleeper id, so they cannot be dropped.")
+        elif player is not None:
+            cap = league.roster_settings.get("max_roster_size")
+            if cap is not None and len(mine) >= int(cap):
+                raise ValidationFailed("Your roster is full. Choose someone to drop.")
 
         token = self._token_for(league.fantasy_account)
         graphql = SleeperGraphQL(self.graphql_url, token)
@@ -388,6 +474,7 @@ class SleeperWriteService:
                 roster_id=roster_id,
                 week=week,
                 player_id=external_id,
+                drop_player_id=drop_external,
             )
         except ProviderAuthError as exc:
             raise ValidationFailed(str(exc.message)) from exc
@@ -398,40 +485,64 @@ class SleeperWriteService:
         if status in {"pending", "failed", "rejected", "cancelled", "canceled"}:
             team_out = await self.context.user_team_out(league, week)
             waiting = status == "pending"
+            if waiting and player is not None and drop_entry is not None:
+                message = (
+                    f"Sleeper has a claim in for {player.name} and drop {drop_entry.player.name}. "
+                    "They join your roster when it clears."
+                )
+            elif waiting and player is not None:
+                message = f"Sleeper has a claim in for {player.name}. They join your roster when it clears."
+            elif waiting and drop_entry is not None:
+                message = f"Sleeper has a claim in to drop {drop_entry.player.name}. It clears with waivers."
+            else:
+                who = player.name if player is not None else drop_entry.player.name if drop_entry else "that player"
+                message = f"Sleeper did not change the roster for {who} ({status})."
             return LineupUpdateResponse(
                 team=team_out,
                 verified=False,
                 public_api_confirmed=False,
-                message=(
-                    f"Sleeper has a claim in for {player.name}. They join your roster when it clears."
-                    if waiting
-                    else f"Sleeper did not add {player.name} ({status})."
-                ),
+                message=message,
             )
 
-        self.session.add(
-            RosterEntry(
-                fantasy_team_id=team.id,
-                player_id=player.id,
-                week=week,
-                roster_slot="BN",
-                is_starter=False,
-                slot_index=None,
+        dropped_name = drop_entry.player.name if drop_entry is not None else None
+        if drop_entry is not None:
+            await self.session.delete(drop_entry)
+        if player is not None:
+            self.session.add(
+                RosterEntry(
+                    fantasy_team_id=team.id,
+                    player_id=player.id,
+                    week=week,
+                    roster_slot="BN",
+                    is_starter=False,
+                    slot_index=None,
+                )
             )
-        )
         await self.session.commit()
-        public = await self._public_has_player(league.external_league_id, roster_id, external_id)
+        if external_id:
+            public = await self._public_has_player(league.external_league_id, roster_id, external_id)
+        elif drop_external:
+            still_there = await self._public_has_player(league.external_league_id, roster_id, drop_external)
+            public = None if still_there is None else not still_there
+        else:
+            public = None
         team_out = await self.context.user_team_out(league, week)
-        lead = f"{player.name} is on your bench."
+        if player is not None:
+            lead = f"{player.name} is on your bench."
+            if dropped_name:
+                lead = f"Dropped {dropped_name}. {lead}"
+        else:
+            lead = f"Dropped {dropped_name}."
+        verb = "add" if player is not None else "drop"
         if public is True:
             message = f"{lead} The public roster matches."
         elif public is False:
             message = (
-                f"{lead} Sleeper confirmed the add. The public roster API still shows the previous roster; "
+                f"{lead} Sleeper confirmed the {verb}. The public roster API still shows the previous roster; "
                 "it is cached and can lag for a few minutes."
             )
         else:
-            message = f"{lead} Sleeper confirmed the add. The public roster API could not be re-read."
+            message = f"{lead} Sleeper confirmed the {verb}. The public roster API could not be re-read."
         return LineupUpdateResponse(
             team=team_out,
             verified=True,
@@ -632,6 +743,13 @@ def _player_view(entry: RosterEntry) -> PlayerOut:
         fantasy_positions=list(player.fantasy_positions or []),
         nfl_team=player.nfl_team,
     )
+
+
+def _sleeper_id(entry: RosterEntry) -> str:
+    external = entry.player.external_id_for(Provider.SLEEPER)
+    if not external:
+        raise ValidationFailed(f"{entry.player.name} has no Sleeper id, so they cannot be traded.")
+    return external
 
 
 def _roster_id(external_team_id: str) -> int:

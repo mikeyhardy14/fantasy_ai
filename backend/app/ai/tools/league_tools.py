@@ -17,6 +17,7 @@ from app.core.errors import NotFoundError
 from app.intelligence.lineup import eligible_positions_for_slot, is_eligible
 from app.intelligence.recommendations import generate_recommendations
 from app.nfl_data.props import norm_name
+from app.schemas.ai import RosterClaim
 from app.schemas.league import LineupUpdateRequest, PlayerOut, RosterMoveRequest, RosterSlotOut
 
 registry = ToolRegistry()
@@ -80,7 +81,7 @@ class PlayerIdArgs(BaseModel):
 
 
 class AvailablePlayersArgs(BaseModel):
-    position: str | None = Field(default=None, description="QB, RB, WR, TE, K or DEF. Omit for all.")
+    position: str | None = Field(default=None, description="QB, RB, WR, TE, FLEX, K or DEF. FLEX is RB, WR, and TE. Omit for all.")
     limit: int = Field(default=10, ge=1, le=25)
 
 
@@ -108,6 +109,17 @@ class SetLineupArgs(BaseModel):
         min_length=1,
         max_length=20,
         description="One roster player name per starting slot, in lineup_slots order from get_roster. Use null for an empty slot.",
+    )
+
+
+class ClaimPlayerArgs(BaseModel):
+    add_name: str | None = Field(
+        default=None,
+        description="Free agent to add, matched by name. Omit when the user only asked to drop someone.",
+    )
+    drop_name: str | None = Field(
+        default=None,
+        description="Rostered player to drop, matched by name. Required when adding onto a full roster.",
     )
 
 
@@ -391,6 +403,47 @@ async def get_team_roster(ctx: ToolContext, args: TeamIdArgs) -> dict[str, Any]:
     }
 
 
+def _league_slot(slot: RosterSlotOut) -> dict[str, Any]:
+    player = slot.player
+    if player is None:
+        return {"slot": slot.slot, "name": None}
+    return {
+        "slot": slot.slot,
+        "name": player.name,
+        "position": player.position,
+        "nfl_team": player.nfl_team,
+        "injury_status": player.injury_status,
+        "on_bye": player.on_bye,
+        "projected_points": player.projected_points,
+    }
+
+
+@registry.tool(
+    "get_league_rosters",
+    "Starters, bench, and IR for every team in this league, in standings order. "
+    "Use this to see who owns a player or to compare other teams. Read only.",
+)
+async def get_league_rosters(ctx: ToolContext, _: EmptyArgs) -> dict[str, Any]:
+    views = await ctx.service.league_rosters(ctx.league, ctx.week)
+    return {
+        "week": ctx.week,
+        "teams": [
+            {
+                "team_id": str(view.team.id),
+                "team": view.team.name,
+                "owner": view.team.owner_name,
+                "record": view.team.record,
+                "is_user": view.team.is_user_team,
+                "projected_points": view.projected_points,
+                "starters": [_league_slot(slot) for slot in view.starters],
+                "bench": [_league_slot(slot) for slot in view.bench],
+                "reserve": [_league_slot(slot) for slot in view.reserve],
+            }
+            for view in views
+        ],
+    }
+
+
 @registry.tool(
     "get_recommendations",
     "Rule-based recommendations computed from the data (injuries, byes, start/sit swaps, waiver targets, weaknesses). Use these as grounded facts.",
@@ -474,6 +527,91 @@ def _lineup_result(result) -> dict[str, Any]:
 
 def _writes_missing() -> dict[str, str]:
     return {"error": "Lineup changes are unavailable in this session."}
+
+
+def _named(players: list[PlayerOut], query: str, missing: str) -> tuple[PlayerOut | None, str | None]:
+    needle = norm_name(query)
+    if not needle:
+        return None, missing
+    exact = [player for player in players if norm_name(player.name) == needle]
+    hits = exact or [player for player in players if needle in norm_name(player.name)]
+    if not hits:
+        return None, missing
+    if len(hits) > 1:
+        names = ", ".join(player.name for player in hits)
+        return None, f"More than one player matches {query}: {names}."
+    return hits[0], None
+
+
+def _claim(add: PlayerOut | None, drop: RosterSlotOut | None) -> RosterClaim:
+    dropped = drop.player if drop and drop.player else None
+    if add and dropped:
+        summary = f"Add {add.name} and drop {dropped.name}."
+    elif add:
+        summary = f"Add {add.name}."
+    else:
+        summary = f"Drop {dropped.name}." if dropped else "Change the roster."
+    bits: list[str] = []
+    if add:
+        bits.append(add.position or "FA")
+        if add.projected_points is not None:
+            bits.append(f"{add.projected_points:g} proj")
+    if dropped:
+        where = drop.slot if drop and drop.is_starter else "bench" if drop and drop.slot == "BN" else (drop.slot if drop else "roster")
+        bits.append(f"drop {dropped.name} ({where})")
+    return RosterClaim(
+        summary=summary,
+        add_player_id=add.id if add else None,
+        add_player_name=add.name if add else None,
+        add_position=add.position if add else None,
+        add_headshot_url=add.headshot_url if add else None,
+        drop_player_id=dropped.id if dropped else None,
+        drop_player_name=dropped.name if dropped else None,
+        drop_position=dropped.position if dropped else None,
+        detail=" · ".join(bits) or None,
+    )
+
+
+@registry.tool(
+    "claim_player",
+    "Propose adding a free agent, dropping a rostered player, or both. "
+    "Does not change the roster. Returns pending_approval so the manager can approve it in the chat. "
+    "Call only when the user asked to add, pick up, claim, or drop a player. "
+    "Name the drop when the roster is full.",
+    ClaimPlayerArgs,
+)
+async def claim_player(ctx: ToolContext, args: ClaimPlayerArgs) -> dict[str, Any]:
+    add_name = (args.add_name or "").strip()
+    drop_name = (args.drop_name or "").strip()
+    if not add_name and not drop_name:
+        return {"error": "Name a player to add, a player to drop, or both."}
+    tc = await ctx.team_context()
+    add = None
+    if add_name:
+        pool = await ctx.service.available_players(ctx.league, search=add_name, limit=8, week=ctx.week)
+        add, error = _named(pool, add_name, f"No available player matches {add_name}.")
+        if error or add is None:
+            return {"error": error or f"No available player matches {add_name}."}
+    drop = None
+    if drop_name:
+        drop, error = find_roster_player(tc.all_roster, drop_name)
+        if error or drop is None or drop.player is None:
+            return {"error": error or f"No rostered player matches {drop_name}."}
+        if add is not None and drop.player.id == add.id:
+            return {"error": "Choose someone else to drop."}
+    if add is not None and drop is None:
+        cap = ctx.league.roster_settings.get("max_roster_size")
+        rostered = len([row for row in tc.all_roster if row.player])
+        if cap is not None and rostered >= int(cap):
+            return {"error": "The roster is full. Name the player to drop."}
+    proposal = _claim(add, drop)
+    ctx.pending_claims.append(proposal)
+    return {
+        "pending_approval": True,
+        "verified": False,
+        "summary": proposal.summary,
+        "message": "Waiting for approval. The roster was not changed.",
+    }
 
 
 def _current_week(ctx: ToolContext) -> None:

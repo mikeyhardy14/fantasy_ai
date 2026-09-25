@@ -5,6 +5,7 @@ import type {
   HealthResponse,
   League,
   LeagueDetail,
+  LeagueMatchup,
   Matchup,
   Player,
   PlayerSheet,
@@ -19,6 +20,7 @@ import type {
   TokenResponse,
   TradeAnalysisResponse,
   TradeReview,
+  ProposeTradeResult,
   Transaction,
   WaiverSuggestions,
   User,
@@ -141,7 +143,9 @@ export const api = {
     team: (id: string, week?: number) => request<Team>(`/api/leagues/${id}/team${qs({ week })}`),
     otherTeam: (id: string, teamId: string, week?: number) =>
       request<Team>(`/api/leagues/${id}/teams/${teamId}${qs({ week })}`),
+    rosters: (id: string, week?: number) => request<Team[]>(`/api/leagues/${id}/rosters${qs({ week })}`),
     matchup: (id: string, week?: number) => request<Matchup | null>(`/api/leagues/${id}/matchup${qs({ week })}`),
+    matchups: (id: string, week?: number) => request<LeagueMatchup[]>(`/api/leagues/${id}/matchups${qs({ week })}`),
     players: (id: string, params: { position?: string; search?: string; available?: boolean; limit?: number } = {}) =>
       request<Player[]>(`/api/leagues/${id}/players${qs(params)}`),
     playerSheet: (id: string, playerId: string, week?: number) =>
@@ -153,19 +157,27 @@ export const api = {
     standings: (id: string) => request<StandingsRow[]>(`/api/leagues/${id}/standings`),
     transactions: (id: string, limit = 25) => request<Transaction[]>(`/api/leagues/${id}/transactions${qs({ limit })}`),
     trades: (id: string) => request<Transaction[]>(`/api/leagues/${id}/trades`),
+    proposeTrade: (id: string, body: { give: string[]; receive: string[] }) =>
+      request<ProposeTradeResult>(`/api/leagues/${id}/trades`, { method: "POST", body: JSON.stringify(body) }),
     needs: (id: string) => request<RosterNeeds>(`/api/leagues/${id}/needs`),
     recommendations: (id: string) => request<Recommendation[]>(`/api/leagues/${id}/recommendations`),
     briefing: (id: string) => request<WeeklyBriefing>(`/api/leagues/${id}/briefing`),
-    sync: (id: string) => request<{ league: League; message: string }>(`/api/leagues/${id}/sync`, { method: "POST" }),
     setLineup: (id: string, week: number, starterPlayerIds: (string | null)[]) =>
       request<LineupUpdate>(`/api/leagues/${id}/lineup`, {
         method: "POST",
         body: JSON.stringify({ week, starter_player_ids: starterPlayerIds }),
       }),
-    addPlayer: (id: string, playerId: string) =>
+    addPlayer: (id: string, playerId: string, dropPlayerId?: string) =>
       request<LineupUpdate>(`/api/leagues/${id}/roster/add`, {
         method: "POST",
-        body: JSON.stringify({ player_id: playerId }),
+        body: JSON.stringify(
+          dropPlayerId ? { player_id: playerId, drop_player_id: dropPlayerId } : { player_id: playerId },
+        ),
+      }),
+    claimRoster: (id: string, body: { player_id?: string; drop_player_id?: string }) =>
+      request<LineupUpdate>(`/api/leagues/${id}/roster/add`, {
+        method: "POST",
+        body: JSON.stringify(body),
       }),
     movePlayer: (
       id: string,

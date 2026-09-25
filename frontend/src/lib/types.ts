@@ -249,6 +249,15 @@ export interface Matchup {
   games?: NflGame[];
 }
 
+export interface LeagueMatchup {
+  week: number;
+  is_bye: boolean;
+  involves_user: boolean;
+  status: "upcoming" | "in_progress" | "final" | "bye";
+  team: MatchupSide;
+  opponent: MatchupSide | null;
+}
+
 export interface StandingsRow extends TeamSummary {
   rank: number;
 }
@@ -259,6 +268,7 @@ export interface TransactionPlayer {
   position: string | null;
   team_id: string | null;
   team_name: string | null;
+  headshot_url?: string | null;
 }
 
 export interface Transaction {
@@ -372,12 +382,25 @@ export interface LineupAction {
   detail: string | null;
 }
 
+export interface RosterClaim {
+  summary: string;
+  add_player_id: string | null;
+  add_player_name: string | null;
+  add_position: string | null;
+  add_headshot_url: string | null;
+  drop_player_id: string | null;
+  drop_player_name: string | null;
+  drop_position: string | null;
+  detail: string | null;
+}
+
 export interface ChatResponse {
   message: string;
   tools_used: string[];
   generated_by: "openai" | "gemini" | "groq" | "deterministic";
   suggested_questions: string[];
   actions?: LineupAction[];
+  claims?: RosterClaim[];
 }
 
 export interface WaiverSuggestions {
@@ -403,6 +426,13 @@ export interface TradeAnalysis {
   lineup_impact: string[];
   risks: string[];
   data_gaps: string[];
+}
+
+export interface ProposeTradeResult {
+  message: string;
+  status: string;
+  transaction_id: string | null;
+  opponent_name: string;
 }
 
 export interface TradeReview {

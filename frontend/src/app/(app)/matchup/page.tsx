@@ -1,6 +1,7 @@
 "use client";
 
 import { MatchupCompare } from "@/components/matchup-compare";
+import { MatchupSlate } from "@/components/matchup-slate";
 import { NflSlate } from "@/components/nfl-slate";
 import { NoLeague } from "@/components/no-league";
 import { PageHeader } from "@/components/page-header";
@@ -10,7 +11,7 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Select } from "@/components/ui/input";
 import { EmptyState, ErrorState, SkeletonRows } from "@/components/ui/states";
 import { useLeague } from "@/lib/league";
-import { useMatchup, useStandings } from "@/lib/queries";
+import { useLeagueMatchups, useMatchup, useStandings } from "@/lib/queries";
 import { cn, formatPoints } from "@/lib/utils";
 import Link from "next/link";
 import { useState } from "react";
@@ -25,6 +26,7 @@ export default function MatchupPage() {
 function MatchupView({ leagueId, currentWeek }: { leagueId: string; currentWeek: number }) {
   const [week, setWeek] = useState(currentWeek);
   const matchup = useMatchup(leagueId, week, week === currentWeek ? 15_000 : false);
+  const slate = useLeagueMatchups(leagueId, week, week === currentWeek ? 60_000 : false);
   const standings = useStandings(leagueId);
 
   return (
@@ -45,7 +47,7 @@ function MatchupView({ leagueId, currentWeek }: { leagueId: string; currentWeek:
       ) : matchup.error ? (
         <ErrorState error={matchup.error} onRetry={() => matchup.refetch()} />
       ) : !matchup.data ? (
-        <Card><EmptyState title="No matchup stored for this week" description="Matchups are pulled for the current week and a few prior weeks during sync." /></Card>
+        <Card><EmptyState title="No matchup this week" /></Card>
       ) : (
         <>
           <Card>
@@ -89,6 +91,8 @@ function MatchupView({ leagueId, currentWeek }: { leagueId: string; currentWeek:
           )}
         </>
       )}
+
+      {slate.data ? <MatchupSlate games={slate.data} week={week} /> : slate.isLoading ? <SkeletonRows rows={4} /> : null}
 
       {matchup.data?.games ? (
         <Card>

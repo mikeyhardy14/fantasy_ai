@@ -1,7 +1,7 @@
 "use client";
 
 import { PageHeader } from "@/components/page-header";
-import { Badge, StatusDot } from "@/components/ui/badge";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -89,7 +89,7 @@ export default function SettingsPage() {
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
                         <p className="font-medium text-slate-100">{PROVIDER_LABELS[a.provider] ?? a.provider} · @{a.username}</p>
-                        <p className="text-xs text-slate-500">Last synced {formatDate(a.last_synced_at)} · {leagues.filter((l) => l.provider === a.provider).length} league(s) imported</p>
+                        <p className="text-xs text-slate-500">{leagues.filter((l) => l.provider === a.provider).length} league(s) imported</p>
                       </div>
                       <div className="flex items-center gap-3">
                         {a.provider === "sleeper" ? (
@@ -117,13 +117,9 @@ export default function SettingsPage() {
               <ul className="divide-y divide-surface-border/60">
                 {leagues.map((l) => (
                   <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 px-5 py-3 text-sm">
-                    <div className="flex items-center gap-3">
-                      <StatusDot status={l.sync_status} />
-                      <div>
-                        <p className="font-medium text-slate-100">{l.name}</p>
-                        <p className="text-xs text-slate-500">{PROVIDER_LABELS[l.provider] ?? l.provider} · {l.season} · {l.team_count} teams · {l.scoring_type ?? "custom"} · synced {formatDate(l.last_synced_at)}</p>
-                        {l.sync_error ? <p className="text-xs text-red-300">{l.sync_error}</p> : null}
-                      </div>
+                    <div>
+                      <p className="font-medium text-slate-100">{l.name}</p>
+                      <p className="text-xs text-slate-500">{PROVIDER_LABELS[l.provider] ?? l.provider} · {l.season} · {l.team_count} teams · {l.scoring_type ?? "custom"}</p>
                     </div>
                     <Button size="sm" variant="ghost" onClick={() => { select(l.id); router.push("/dashboard"); }}>Open</Button>
                   </li>
@@ -174,7 +170,7 @@ function AssistantApproval() {
           <span>
             <span className="font-medium text-slate-100">Auto-approve lineup moves</span>
             <span className="mt-1 block text-xs leading-relaxed text-slate-400">
-              A recommended start-over is written to this week&apos;s lineup as soon as the assistant proposes it. Leave this off and the chat shows the move for you to approve.
+              A recommended start-over is written to this week&apos;s lineup as soon as the assistant proposes it. Leave this off and the chat shows the move for you to approve. Adds and drops always wait for approval.
             </span>
           </span>
         </label>

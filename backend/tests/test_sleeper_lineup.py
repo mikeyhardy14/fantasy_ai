@@ -55,13 +55,22 @@ def install_graphql(router, mode: dict):
                     }
                 },
             )
+        if "propose_trade" in query:
+            variables = body["variables"]
+            seen["trade"] = variables
+            assert variables["league_id"] == fx.LEAGUE_ID
+            return Response(
+                200,
+                json={"data": {"propose_trade": {"transaction_id": "tx-trade", "status": "pending"}}},
+            )
         if "league_create_roster_transaction" in query:
             variables = body["variables"]
             seen["add"] = variables["adds"]
+            seen["drops"] = variables["drops"]
             assert variables["league_id"] == fx.LEAGUE_ID
             assert variables["roster_id"] == 1
             assert variables["leg"] == 4
-            added = variables["adds"][0]["player_id"]
+            added = variables["adds"][0]["player_id"] if variables["adds"] else None
             return Response(
                 200,
                 json={
@@ -69,7 +78,7 @@ def install_graphql(router, mode: dict):
                         "league_create_roster_transaction": {
                             "transaction_id": "tx-add",
                             "status": "complete",
-                            "adds": [{"player_id": added, "roster_id": 1}],
+                            "adds": [{"player_id": added, "roster_id": 1}] if added else [],
                         }
                     }
                 },
@@ -500,6 +509,7 @@ async def test_add_puts_an_unowned_player_on_the_bench(client, auth_headers, sle
     assert "Free Agent is on your bench." in body["message"]
     assert body["verified"] is True
     assert seen["add"] == [{"player_id": "6001", "roster_id": 1}]
+    assert seen["drops"] == []
     assert any(slot["player"] and slot["player"]["name"] == "Free Agent" for slot in body["team"]["bench"])
 
     team, _, _ = await _lineup(client, auth_headers, league["id"])
@@ -510,3 +520,94 @@ async def test_add_puts_an_unowned_player_on_the_bench(client, auth_headers, sle
     )
     assert owned.status_code == 422
     assert "already has" in owned.json()["error"]["message"]
+
+
+async def test_propose_trade_sends_the_offer_to_one_manager(client, auth_headers, sleeper_mock):
+    seen = install_graphql(sleeper_mock, {})
+    league = await _import(client, auth_headers)
+    await _save_token(client, auth_headers)
+    team, by_sleeper, _ = await _lineup(client, auth_headers, league["id"])
+    rosters = await client.get(f"/api/leagues/{league['id']}/rosters", headers=auth_headers)
+    assert rosters.status_code == 200, rosters.text
+    rival = next(row for row in rosters.json() if row["team"]["name"] == "Rival")
+    theirs = next(slot["player"]["id"] for slot in rival["starters"] if slot["player"]["external_ids"]["sleeper"] == "2005")
+
+    sent = await client.post(
+        f"/api/leagues/{league['id']}/trades",
+        json={"give": [by_sleeper["3004"]], "receive": [theirs]},
+        headers=auth_headers,
+    )
+    assert sent.status_code == 200, sent.text
+    body = sent.json()
+    assert body["opponent_name"] == "Rival"
+    assert body["status"] == "pending"
+    assert "Bench Receiver" in body["message"]
+    assert "Opp RunnerOne" in body["message"]
+    assert seen["trade"]["k_drops"] == ["3004"]
+    assert seen["trade"]["k_adds"] == ["2005"]
+    assert seen["trade"]["v_adds"] == [1]
+    assert seen["trade"]["v_drops"] == [2]
+    assert any(slot["player"] and slot["player"]["name"] == "Bench Receiver" for slot in team["bench"])
+
+    mixed = await client.post(
+        f"/api/leagues/{league['id']}/trades",
+        json={"give": [by_sleeper["3004"]], "receive": [by_sleeper["1001"], theirs]},
+        headers=auth_headers,
+    )
+    assert mixed.status_code == 422
+
+
+async def test_add_can_drop_someone_or_be_refused(client, auth_headers, sleeper_mock):
+    from uuid import uuid4
+
+    seen = install_graphql(sleeper_mock, {})
+    league = await _import(client, auth_headers)
+    await _save_token(client, auth_headers)
+    team, _, _ = await _lineup(client, auth_headers, league["id"])
+    found = await client.get(
+        f"/api/leagues/{league['id']}/players",
+        params={"search": "Free", "available": True},
+        headers=auth_headers,
+    )
+    free = next(player for player in found.json() if player["name"] == "Free Agent")
+    stranger = await client.post(
+        f"/api/leagues/{league['id']}/roster/add",
+        json={"player_id": free["id"], "drop_player_id": str(uuid4())},
+        headers=auth_headers,
+    )
+    assert stranger.status_code == 422
+    assert "not on your roster" in stranger.json()["error"]["message"]
+    assert "add" not in seen
+
+    drop_id = _player(team, "3004")["id"]
+    added = await client.post(
+        f"/api/leagues/{league['id']}/roster/add",
+        json={"player_id": free["id"], "drop_player_id": drop_id},
+        headers=auth_headers,
+    )
+    assert added.status_code == 200, added.text
+    body = added.json()
+    assert "Dropped Bench Receiver." in body["message"]
+    assert "Free Agent is on your bench." in body["message"]
+    assert seen["drops"] == [{"player_id": "3004", "roster_id": 1}]
+    names = [slot["player"]["name"] for group in ("starters", "bench", "reserve") for slot in body["team"][group] if slot["player"]]
+    assert "Free Agent" in names
+    assert "Bench Receiver" not in names
+
+    flash = next(slot["player"] for slot in body["team"]["bench"] if slot["player"]["name"] == "Flash Backup")
+    only_drop = await client.post(
+        f"/api/leagues/{league['id']}/roster/add",
+        json={"drop_player_id": flash["id"]},
+        headers=auth_headers,
+    )
+    assert only_drop.status_code == 200, only_drop.text
+    assert "Dropped Flash Backup." in only_drop.json()["message"]
+    assert seen["add"] == []
+    assert seen["drops"] == [{"player_id": "2003", "roster_id": 1}]
+    left = [
+        slot["player"]["name"]
+        for group in ("starters", "bench", "reserve")
+        for slot in only_drop.json()["team"][group]
+        if slot["player"]
+    ]
+    assert "Flash Backup" not in left

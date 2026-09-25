@@ -1,16 +1,20 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
+
+const LIVE_MS = 15_000;
 
 export const keys = {
   league: (id: string) => ["league", id] as const,
   team: (id: string, week?: number) => ["league", id, "team", week ?? "current"] as const,
   otherTeam: (id: string, teamId: string, week?: number) => ["league", id, "teams", teamId, week ?? "current"] as const,
   matchup: (id: string, week?: number) => ["league", id, "matchup", week ?? "current"] as const,
+  matchups: (id: string, week?: number) => ["league", id, "matchups", week ?? "current"] as const,
   players: (id: string, params: object) => ["league", id, "players", params] as const,
   rankings: (id: string, params: object) => ["league", id, "rankings", params] as const,
   standings: (id: string) => ["league", id, "standings"] as const,
+  rosters: (id: string, week?: number) => ["league", id, "rosters", week ?? "current"] as const,
   transactions: (id: string) => ["league", id, "transactions"] as const,
   trades: (id: string) => ["league", id, "trades"] as const,
   needs: (id: string) => ["league", id, "needs"] as const,
@@ -20,11 +24,11 @@ export const keys = {
 };
 
 export function useLeagueDetail(id: string | undefined) {
-  return useQuery({ queryKey: keys.league(id!), queryFn: () => api.leagues.get(id!), enabled: !!id });
+  return useQuery({ queryKey: keys.league(id!), queryFn: () => api.leagues.get(id!), enabled: !!id, refetchInterval: LIVE_MS });
 }
 
 export function useTeam(id: string | undefined, week?: number) {
-  return useQuery({ queryKey: keys.team(id!, week), queryFn: () => api.leagues.team(id!, week), enabled: !!id });
+  return useQuery({ queryKey: keys.team(id!, week), queryFn: () => api.leagues.team(id!, week), enabled: !!id, refetchInterval: LIVE_MS });
 }
 
 export function useOtherTeam(id: string | undefined, teamId: string | undefined, week?: number) {
@@ -32,6 +36,7 @@ export function useOtherTeam(id: string | undefined, teamId: string | undefined,
     queryKey: keys.otherTeam(id!, teamId!, week),
     queryFn: () => api.leagues.otherTeam(id!, teamId!, week),
     enabled: !!id && !!teamId,
+    refetchInterval: LIVE_MS,
   });
 }
 
@@ -40,7 +45,16 @@ export function useMatchup(id: string | undefined, week?: number, refetchInterva
     queryKey: keys.matchup(id!, week),
     queryFn: () => api.leagues.matchup(id!, week),
     enabled: !!id,
-    refetchInterval: refetchInterval || undefined,
+    refetchInterval: refetchInterval === false ? undefined : (refetchInterval ?? LIVE_MS),
+  });
+}
+
+export function useLeagueMatchups(id: string | undefined, week?: number, refetchInterval?: number | false) {
+  return useQuery({
+    queryKey: keys.matchups(id!, week),
+    queryFn: () => api.leagues.matchups(id!, week),
+    enabled: !!id,
+    refetchInterval: refetchInterval === false ? undefined : (refetchInterval ?? LIVE_MS),
   });
 }
 
@@ -50,6 +64,7 @@ export function usePlayers(id: string | undefined, params: { position?: string; 
     queryFn: () => api.leagues.players(id!, params),
     enabled: !!id,
     placeholderData: (prev) => prev,
+    refetchInterval: LIVE_MS,
   });
 }
 
@@ -62,23 +77,33 @@ export function useRankings(
     queryFn: () => api.leagues.rankings(id!, params),
     enabled: !!id,
     placeholderData: (prev) => prev,
+    refetchInterval: LIVE_MS,
   });
 }
 
 export function useStandings(id: string | undefined) {
-  return useQuery({ queryKey: keys.standings(id!), queryFn: () => api.leagues.standings(id!), enabled: !!id });
+  return useQuery({ queryKey: keys.standings(id!), queryFn: () => api.leagues.standings(id!), enabled: !!id, refetchInterval: LIVE_MS });
+}
+
+export function useLeagueRosters(id: string | undefined, week?: number) {
+  return useQuery({
+    queryKey: keys.rosters(id!, week),
+    queryFn: () => api.leagues.rosters(id!, week),
+    enabled: !!id,
+    refetchInterval: LIVE_MS,
+  });
 }
 
 export function useTrades(id: string | undefined) {
-  return useQuery({ queryKey: keys.trades(id!), queryFn: () => api.leagues.trades(id!), enabled: !!id });
+  return useQuery({ queryKey: keys.trades(id!), queryFn: () => api.leagues.trades(id!), enabled: !!id, refetchInterval: LIVE_MS });
 }
 
 export function useTransactions(id: string | undefined) {
-  return useQuery({ queryKey: keys.transactions(id!), queryFn: () => api.leagues.transactions(id!), enabled: !!id });
+  return useQuery({ queryKey: keys.transactions(id!), queryFn: () => api.leagues.transactions(id!), enabled: !!id, refetchInterval: LIVE_MS });
 }
 
 export function useNeeds(id: string | undefined) {
-  return useQuery({ queryKey: keys.needs(id!), queryFn: () => api.leagues.needs(id!), enabled: !!id });
+  return useQuery({ queryKey: keys.needs(id!), queryFn: () => api.leagues.needs(id!), enabled: !!id, refetchInterval: LIVE_MS });
 }
 
 export function useWaiverSuggestions(id: string | undefined) {
@@ -91,22 +116,16 @@ export function useWaiverSuggestions(id: string | undefined) {
 }
 
 export function useRecommendations(id: string | undefined) {
-  return useQuery({ queryKey: keys.recommendations(id!), queryFn: () => api.leagues.recommendations(id!), enabled: !!id });
+  return useQuery({
+    queryKey: keys.recommendations(id!),
+    queryFn: () => api.leagues.recommendations(id!),
+    enabled: !!id,
+    refetchInterval: LIVE_MS,
+  });
 }
 
 export function useBriefing(id: string | undefined, enabled = true) {
   return useQuery({ queryKey: keys.briefing(id!), queryFn: () => api.leagues.briefing(id!), enabled: !!id && enabled, staleTime: 5 * 60_000 });
-}
-
-export function useSyncLeague(id: string | undefined) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => api.leagues.sync(id!),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["league", id] });
-      void qc.invalidateQueries({ queryKey: ["leagues"] });
-    },
-  });
 }
 
 export function useHealth() {

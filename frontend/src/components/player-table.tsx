@@ -8,12 +8,16 @@ import { EmptyState } from "./ui/states";
 export function PlayerTable({
   players,
   onSelect,
+  onAdd,
+  addingId,
   selectedIds,
   emptyTitle = "No players found",
   week,
 }: {
   players: Player[];
   onSelect?: (player: Player) => void;
+  onAdd?: (player: Player) => void;
+  addingId?: string | null;
   selectedIds?: Set<string>;
   emptyTitle?: string;
   week?: number;
@@ -31,7 +35,8 @@ export function PlayerTable({
             <th className="px-2 py-2 font-medium">Status</th>
             <th className="px-2 py-2 text-right font-medium" title="Points scored this season">Pts</th>
             <th className="px-2 py-2 text-right font-medium">Proj</th>
-            <th className="px-5 py-2 text-right font-medium">PPG</th>
+            <th className={cn("py-2 text-right font-medium", onAdd ? "px-2" : "px-5")}>PPG</th>
+            {onAdd ? <th className="px-5 py-2 font-medium">Add</th> : null}
           </tr>
         </thead>
         <tbody className="divide-y divide-surface-border/60">
@@ -67,7 +72,23 @@ export function PlayerTable({
                 </td>
                 <td className="px-2 py-2.5 text-right tabular-nums text-slate-200" title="Points scored this season">{formatPoints(p.season_points)}</td>
                 <td className="px-2 py-2.5 text-right tabular-nums text-slate-200" title={p.projection_note ?? undefined}>{formatPoints(p.projected_points)}</td>
-                <td className="px-5 py-2.5 text-right tabular-nums text-slate-400">{formatPoints(p.points_per_game)}</td>
+                <td className={cn("py-2.5 text-right tabular-nums text-slate-400", onAdd ? "px-2" : "px-5")}>{formatPoints(p.points_per_game)}</td>
+                {onAdd ? (
+                  <td className="px-5 py-2.5">
+                    <button
+                      type="button"
+                      data-testid="waiver-add"
+                      disabled={addingId === p.id}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onAdd(p);
+                      }}
+                      className="border border-surface-border px-2 py-1 text-xs text-slate-100 hover:border-brand disabled:opacity-50"
+                    >
+                      Add
+                    </button>
+                  </td>
+                ) : null}
               </tr>
             );
           })}

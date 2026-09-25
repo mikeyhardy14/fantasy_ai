@@ -104,12 +104,27 @@ class LineupAction(BaseModel):
     detail: str | None = None
 
 
+class RosterClaim(BaseModel):
+    """An add, a drop, or both. Nothing is written until the manager approves it."""
+
+    summary: str
+    add_player_id: UUID | None = None
+    add_player_name: str | None = None
+    add_position: str | None = None
+    add_headshot_url: str | None = None
+    drop_player_id: UUID | None = None
+    drop_player_name: str | None = None
+    drop_position: str | None = None
+    detail: str | None = None
+
+
 class ChatResponse(BaseModel):
     message: str
     tools_used: list[str] = Field(default_factory=list)
     generated_by: GeneratedBy
     suggested_questions: list[str] = Field(default_factory=list)
     actions: list[LineupAction] = Field(default_factory=list)
+    claims: list[RosterClaim] = Field(default_factory=list)
 
 
 # ---- Trade -------------------------------------------------------------------

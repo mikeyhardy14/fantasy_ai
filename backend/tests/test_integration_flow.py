@@ -120,6 +120,8 @@ async def test_import_league_and_dashboard(client, auth_headers, sleeper_mock, s
     resp = await client.get(f"/api/leagues/{league_id}/transactions", headers=auth_headers)
     tx = resp.json()[0]
     assert tx["type"] == "waiver" and tx["adds"][0]["player_name"] == "Flash Backup" and tx["involves_user"]
+    assert tx["adds"][0]["headshot_url"].endswith("/2003.jpg")
+    assert tx["drops"][0]["headshot_url"].endswith("/9999.jpg")
 
     # Player mapping: internal id != Sleeper id, mapping table holds the Sleeper id
     result = await session.execute(
@@ -131,6 +133,24 @@ async def test_import_league_and_dashboard(client, auth_headers, sleeper_mock, s
     assert player.external_id_for("yahoo") is None
     # Dropped player referenced only by a transaction still persisted so the link resolves.
     assert tx["drops"][0]["player_name"] == "Dropped Guy"
+
+
+async def test_opening_a_league_reads_sleeper_live(client, auth_headers, sleeper_mock):
+    from copy import deepcopy
+
+    from httpx import Response
+
+    league = await import_league(client, auth_headers)
+    rosters = deepcopy(fx.ROSTERS)
+    rosters[0]["settings"]["wins"] = 9
+    rosters[0]["starters"] = ["2003", *rosters[0]["starters"][1:]]
+    sleeper_mock.get(f"/league/{fx.LEAGUE_ID}/rosters").mock(return_value=Response(200, json=rosters))
+
+    resp = await client.get(f"/api/leagues/{league['id']}/team", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["team"]["wins"] == 9
+    assert body["starters"][0]["player"]["name"] == "Flash Backup"
 
 
 async def test_sync_is_idempotent(client, auth_headers, sleeper_mock, session):

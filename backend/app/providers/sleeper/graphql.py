@@ -46,19 +46,36 @@ mutation($league_id: Snowflake!, $roster_id: Int!, $reserve: [String]) {
 }
 """.strip()
 
+PROPOSE_TRADE = """
+mutation($league_id: Snowflake!, $k_adds: [String], $v_adds: [Int], $k_drops: [String], $v_drops: [Int], $waiver_budget: [String]) {
+  propose_trade(
+    league_id: $league_id
+    k_adds: $k_adds
+    v_adds: $v_adds
+    k_drops: $k_drops
+    v_drops: $v_drops
+    waiver_budget: $waiver_budget
+  ) {
+    transaction_id
+    status
+  }
+}
+""".strip()
+
 ADD_FREE_AGENT = """
-mutation($league_id: Snowflake!, $roster_id: Int!, $leg: Int!, $adds: [Map]!) {
+mutation($league_id: Snowflake!, $roster_id: Int!, $leg: Int!, $adds: [Map]!, $drops: [Map]!) {
   league_create_roster_transaction(
     league_id: $league_id
     type: "free_agent"
     roster_id: $roster_id
     leg: $leg
     adds: $adds
-    drops: []
+    drops: $drops
   ) {
     transaction_id
     status
     adds
+    drops
   }
 }
 """.strip()
@@ -174,19 +191,60 @@ class SleeperGraphQL:
                 return [str(s) for s in starters]
         return None
 
-    async def add_free_agent(self, *, league_id: str, roster_id: int, week: int, player_id: str) -> dict[str, Any]:
+    async def propose_trade(
+        self,
+        *,
+        league_id: str,
+        my_roster_id: int,
+        their_roster_id: int,
+        give_player_ids: list[str],
+        receive_player_ids: list[str],
+    ) -> dict[str, Any]:
+        """Offer players to one other roster. Adds land on us; drops land on them."""
+        if not give_player_ids or not receive_player_ids:
+            raise ProviderError("Sleeper was not given both sides of a trade.", provider="sleeper")
+        data = await self.execute(
+            PROPOSE_TRADE,
+            {
+                "league_id": league_id,
+                "k_adds": receive_player_ids,
+                "v_adds": [my_roster_id] * len(receive_player_ids),
+                "k_drops": give_player_ids,
+                "v_drops": [their_roster_id] * len(give_player_ids),
+                "waiver_budget": None,
+            },
+        )
+        tx = data.get("propose_trade")
+        if not isinstance(tx, dict):
+            raise ProviderError("Sleeper did not confirm the trade offer.", provider="sleeper")
+        return tx
+
+    async def add_free_agent(
+        self,
+        *,
+        league_id: str,
+        roster_id: int,
+        week: int,
+        player_id: str | None = None,
+        drop_player_id: str | None = None,
+    ) -> dict[str, Any]:
+        if not player_id and not drop_player_id:
+            raise ProviderError("Sleeper was not given a player to add or drop.", provider="sleeper")
+        adds = [{"player_id": player_id, "roster_id": roster_id}] if player_id else []
+        drops = [{"player_id": drop_player_id, "roster_id": roster_id}] if drop_player_id else []
         data = await self.execute(
             ADD_FREE_AGENT,
             {
                 "league_id": league_id,
                 "roster_id": roster_id,
                 "leg": week,
-                "adds": [{"player_id": player_id, "roster_id": roster_id}],
+                "adds": adds,
+                "drops": drops,
             },
         )
         tx = data.get("league_create_roster_transaction")
         if not isinstance(tx, dict):
-            raise ProviderError("Sleeper did not confirm the add.", provider="sleeper")
+            raise ProviderError("Sleeper did not confirm the roster move.", provider="sleeper")
         return tx
 
     async def set_reserve(self, *, league_id: str, roster_id: int, reserve: list[str]) -> None:

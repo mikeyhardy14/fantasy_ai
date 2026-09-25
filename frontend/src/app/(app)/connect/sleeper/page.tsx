@@ -134,10 +134,13 @@ function LeagueRow({ league, onImport, importing, disabled }: { league: Provider
         <p className="text-xs text-slate-500">{league.season} · {league.team_count} teams · {league.scoring_type ?? "custom"} · {league.status?.replace("_", " ") ?? ""}</p>
       </div>
       <div className="flex items-center gap-2">
-        {league.imported ? <Badge className="bg-brand-soft text-emerald-200 ring-emerald-500/30">Imported</Badge> : null}
-        <Button size="sm" variant={league.imported ? "secondary" : "primary"} onClick={onImport} loading={importing} disabled={disabled}>
-          {league.imported ? "Re-sync" : "Import"}
-        </Button>
+        {league.imported ? (
+          <Badge className="bg-brand-soft text-emerald-200 ring-emerald-500/30">Live</Badge>
+        ) : (
+          <Button size="sm" onClick={onImport} loading={importing} disabled={disabled}>
+            Import
+          </Button>
+        )}
       </div>
     </li>
   );

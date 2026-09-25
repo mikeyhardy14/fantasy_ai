@@ -8,17 +8,16 @@ import { RecommendationList } from "@/components/recommendation-card";
 import { irRulesFromSettings, LineupBoard } from "@/components/lineup-board";
 import { RosterTable } from "@/components/roster-table";
 import { TransactionList } from "@/components/transaction-list";
-import { Badge, FlagBadges, PositionBadge } from "@/components/ui/badge";
+import { FlagBadges, PositionBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { EmptyState, ErrorState, Skeleton, SkeletonRows } from "@/components/ui/states";
 import { api } from "@/lib/api";
 import { useLeague } from "@/lib/league";
-import { keys, useLeagueDetail, useMatchup, useRecommendations, useStandings, useSyncLeague, useTeam, useTransactions, useBriefing } from "@/lib/queries";
+import { keys, useLeagueDetail, useMatchup, useRecommendations, useStandings, useTeam, useTransactions, useBriefing } from "@/lib/queries";
 import type { RosterSlot } from "@/lib/types";
-import { cn, formatPoints, relativeTime, slotNeedsAttention } from "@/lib/utils";
+import { cn, formatPoints, slotNeedsAttention } from "@/lib/utils";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -37,7 +36,6 @@ function Dashboard({ leagueId }: { leagueId: string }) {
   const recs = useRecommendations(leagueId);
   const standings = useStandings(leagueId);
   const txs = useTransactions(leagueId);
-  const sync = useSyncLeague(leagueId);
   const [briefingRequested, setBriefingRequested] = useState(false);
   const briefing = useBriefing(leagueId, briefingRequested);
   const analyze = useMutation({ mutationFn: () => api.ai.analyze(leagueId) });
@@ -78,23 +76,14 @@ function Dashboard({ leagueId }: { leagueId: string }) {
         description={
           <span className="flex flex-wrap items-center gap-2">
             {selected?.name} · {selected?.scoring_type ?? "Custom scoring"} · Week {selected?.current_week}
-            <span className="text-slate-600">·</span>
-            <span>Synced {relativeTime(selected?.last_synced_at)}</span>
-            {selected?.sync_status === "error" ? <Badge className="bg-red-500/15 text-red-300 ring-red-500/30">Sync error</Badge> : null}
           </span>
         }
         action={
-          <>
-            <Button variant="secondary" size="sm" onClick={() => sync.mutate()} loading={sync.isPending}>
-              <RefreshCw className="h-3.5 w-3.5" /> Sync
-            </Button>
-            <Button size="sm" onClick={() => analyze.mutate()} loading={analyze.isPending}>
-              Analyze My Team
-            </Button>
-          </>
+          <Button size="sm" onClick={() => analyze.mutate()} loading={analyze.isPending}>
+            Analyze My Team
+          </Button>
         }
       />
-      {sync.error ? <ErrorState error={sync.error} title="Sync failed" className="rounded-xl border border-red-500/20 py-4" /> : null}
 
       <div className="grid grid-cols-2 gap-x-8 gap-y-5 border-b border-surface-border pb-6 lg:grid-cols-4">
         <StatCard label="Record" value={team.data?.team.record} sub={team.data ? `${formatPoints(team.data.team.points_for)} PF · ${formatPoints(team.data.team.points_against)} PA` : undefined} loading={team.isLoading} />
@@ -133,7 +122,7 @@ function Dashboard({ leagueId }: { leagueId: string }) {
               ) : matchup.error ? (
                 <ErrorState error={matchup.error} onRetry={() => matchup.refetch()} className="py-4" />
               ) : !matchup.data ? (
-                <EmptyState title="No matchup data" description="Sync the league to pull this week's matchup." className="py-6" />
+                <EmptyState title="No matchup this week" className="py-6" />
               ) : matchup.data.is_bye ? (
                 <EmptyState title="Bye week" description="Your team does not play this week." className="py-6" />
               ) : (
@@ -236,17 +225,17 @@ function Dashboard({ leagueId }: { leagueId: string }) {
           </Card>
 
           <Card>
-            <CardHeader title="Standings" />
+            <CardHeader title="Standings" action={<Link href="/teams" className="text-xs text-brand hover:underline">All teams</Link>} />
             <CardBody className="px-0 py-0">
               {standings.isLoading ? (
                 <div className="p-5"><SkeletonRows rows={6} /></div>
               ) : (
                 <ul className="divide-y divide-surface-border/60">
-                  {standings.data?.slice(0, 6).map((row) => (
+                  {standings.data?.map((row) => (
                     <li key={row.id} className={cn("flex items-center justify-between px-5 py-2 text-sm", row.is_user_team && "bg-brand-soft/20")}>
                       <span className="flex items-center gap-3 min-w-0">
                         <span className="w-4 text-right text-xs text-slate-500">{row.rank}</span>
-                        <span className={cn("truncate", row.is_user_team ? "font-medium text-emerald-200" : "text-slate-200")}>{row.name}</span>
+                        <Link href={row.is_user_team ? "/team" : `/teams/${row.id}`} className={cn("truncate hover:underline", row.is_user_team ? "font-medium text-emerald-200" : "text-slate-200")}>{row.name}</Link>
                       </span>
                       <span className="tabular-nums text-slate-400">{row.record}</span>
                     </li>

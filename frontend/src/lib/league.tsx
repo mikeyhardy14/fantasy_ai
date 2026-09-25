@@ -19,7 +19,7 @@ interface LeagueState {
 const LeagueContext = createContext<LeagueState | null>(null);
 
 export function LeagueProvider({ children }: { children: ReactNode }) {
-  const query = useQuery({ queryKey: ["leagues"], queryFn: api.leagues.list, staleTime: 30_000 });
+  const query = useQuery({ queryKey: ["leagues"], queryFn: api.leagues.list, refetchInterval: 15_000 });
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {

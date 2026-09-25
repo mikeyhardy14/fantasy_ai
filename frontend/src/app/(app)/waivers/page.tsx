@@ -3,13 +3,16 @@
 import { NoLeague } from "@/components/no-league";
 import { PageHeader } from "@/components/page-header";
 import { PlayerTable } from "@/components/player-table";
+import { rosterPlayers, WaiverAddDialog } from "@/components/waiver-add";
 import { Badge, PositionBadge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { ErrorState, SkeletonRows } from "@/components/ui/states";
+import { api } from "@/lib/api";
 import { useLeague } from "@/lib/league";
-import { useNeeds, usePlayers, useTeam, useWaiverSuggestions } from "@/lib/queries";
+import { keys, useLeagueDetail, useNeeds, usePlayers, useTeam, useWaiverSuggestions } from "@/lib/queries";
 import type { Player } from "@/lib/types";
 import { cn, GRADE_STYLES } from "@/lib/utils";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 
@@ -30,9 +33,36 @@ function byProjection(players: Player[]): Player[] {
 }
 
 function WaiversView({ leagueId, week }: { leagueId: string; week: number }) {
+  const { selected } = useLeague();
   const needs = useNeeds(leagueId);
   const team = useTeam(leagueId);
+  const detail = useLeagueDetail(leagueId);
   const suggestions = useWaiverSuggestions(leagueId);
+  const writes = selected?.provider === "sleeper" && !!detail.data?.account.writes_enabled;
+  const [claim, setClaim] = useState<Player | null>(null);
+  const [claimError, setClaimError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const qc = useQueryClient();
+  const add = useMutation({
+    mutationFn: (dropPlayerId: string | null) => {
+      if (!claim) throw new Error("Choose a player to add.");
+      return api.leagues.addPlayer(leagueId, claim.id, dropPlayerId ?? undefined);
+    },
+    onSuccess: async (result) => {
+      qc.setQueryData(keys.team(leagueId, week), result.team);
+      qc.setQueryData(keys.team(leagueId), result.team);
+      setNotice(result.message);
+      setClaim(null);
+      setClaimError(null);
+      await qc.invalidateQueries({ queryKey: ["league", leagueId] });
+    },
+    onError: (error) => {
+      setClaimError(error instanceof Error ? error.message : "Could not add that player.");
+    },
+  });
+  const rosterCount = team.data ? team.data.starters.length + team.data.bench.length + team.data.reserve.length : 0;
+  const maxSize = needs.data?.max_roster_size ?? null;
+  const dropRequired = !team.data || (maxSize != null && rosterCount >= maxSize);
   // null follows the weakest position. "" is an explicit All.
   const [position, setPosition] = useState<string | null>(null);
   const showingAll = position === "";
@@ -52,6 +82,7 @@ function WaiversView({ leagueId, week }: { leagueId: string; week: number }) {
             : undefined
         }
       />
+      {notice ? <p className="text-sm text-slate-300">{notice}</p> : null}
       <div className="grid gap-6 xl:grid-cols-3">
         <div className="space-y-6 xl:col-span-2">
           <Card>
@@ -60,11 +91,13 @@ function WaiversView({ leagueId, week }: { leagueId: string; week: number }) {
               description={
                 showingAll || !effectivePosition
                   ? "All positions, highest projected first"
-                  : `Highest projected ${effectivePosition}${position === null ? ", your weakest position" : ""}`
+                  : effectivePosition === "FLEX"
+                    ? "Highest projected flex (RB, WR, TE)"
+                    : `Highest projected ${effectivePosition}${position === null ? ", your weakest position" : ""}`
               }
               action={
                 <div className="flex flex-wrap gap-1">
-                  {["", "QB", "RB", "WR", "TE", "K", "DEF"].map((p) => (
+                  {["", "QB", "RB", "WR", "TE", "FLEX", "K", "DEF"].map((p) => (
                     <button
                       key={p}
                       onClick={() => setPosition(p)}
@@ -81,7 +114,7 @@ function WaiversView({ leagueId, week }: { leagueId: string; week: number }) {
                 </div>
               }
             />
-            {available.isLoading ? <CardBody><SkeletonRows rows={8} /></CardBody> : available.error ? <ErrorState error={available.error} onRetry={() => available.refetch()} /> : <PlayerTable players={byProjection(available.data ?? [])} emptyTitle={showingAll ? "No available players" : "No available players at this position"} week={week} />}
+            {available.isLoading ? <CardBody><SkeletonRows rows={8} /></CardBody> : available.error ? <ErrorState error={available.error} onRetry={() => available.refetch()} /> : <PlayerTable players={byProjection(available.data ?? [])} onAdd={writes ? (player) => { setClaimError(null); setClaim(player); } : undefined} addingId={add.isPending ? claim?.id : null} emptyTitle={showingAll ? "No available players" : "No available players at this position"} week={week} />}
           </Card>
         </div>
         <div className="space-y-6">
@@ -131,6 +164,22 @@ function WaiversView({ leagueId, week }: { leagueId: string; week: number }) {
           </Card>
         </div>
       </div>
+      {claim ? (
+        <WaiverAddDialog
+          player={claim}
+          roster={team.data ? rosterPlayers(team.data) : []}
+          dropRequired={dropRequired}
+          pending={add.isPending}
+          error={claimError}
+          onDrop={(playerId) => add.mutate(playerId)}
+          onKeep={dropRequired ? undefined : () => add.mutate(null)}
+          onCancel={() => {
+            if (add.isPending) return;
+            setClaim(null);
+            setClaimError(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

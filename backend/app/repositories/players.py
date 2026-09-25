@@ -101,7 +101,12 @@ class PlayerRepository:
         if exclude_ids:
             stmt = stmt.where(Player.id.not_in(list(exclude_ids)))
         if position:
-            stmt = stmt.where(Player.position == position.upper())
+            pos = position.upper()
+            # Flex is not a stored position. It is every back, receiver, and tight end.
+            if pos == "FLEX":
+                stmt = stmt.where(Player.position.in_(("RB", "WR", "TE")))
+            else:
+                stmt = stmt.where(Player.position == pos)
         if nfl_team:
             stmt = stmt.where(Player.nfl_team == nfl_team.upper())
         if query:

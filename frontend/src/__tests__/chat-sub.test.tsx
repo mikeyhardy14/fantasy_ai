@@ -41,7 +41,10 @@ describe("Chat subs", () => {
         public_api_confirmed: false,
         message: "Cooper Rush is now starting at QB.",
       }));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+      if (String(url).includes("/standings")) return jsonResponse([]);
+      return fetchMock(url, init);
+    });
     const user = userEvent.setup();
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(
@@ -100,7 +103,10 @@ describe("Chat subs", () => {
         public_api_confirmed: false,
         message: "Cooper Rush is now starting at QB.",
       }));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+      if (String(url).includes("/standings")) return jsonResponse([]);
+      return fetchMock(url, init);
+    });
     const user = userEvent.setup();
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(
@@ -114,5 +120,99 @@ describe("Chat subs", () => {
     expect(await screen.findByTestId("sub-result")).toHaveTextContent("Cooper Rush is now starting at QB.");
     expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toMatchObject({ auto_approve: true });
     expect(String(fetchMock.mock.calls[1][0])).toContain("/lineup/move");
+  });
+
+  it("asks before adding and dropping, and writes only after approval", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    window.localStorage.setItem("omaha.lineup-auto-approve", "1");
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        message: "Add Free Agent and drop Bench Receiver. Approve it in the chat.",
+        tools_used: ["claim_player"],
+        generated_by: "deterministic",
+        suggested_questions: [],
+        actions: [],
+        claims: [{
+          summary: "Add Free Agent and drop Bench Receiver.",
+          add_player_id: "free-1",
+          add_player_name: "Free Agent",
+          add_position: "RB",
+          add_headshot_url: null,
+          drop_player_id: "bench-1",
+          drop_player_name: "Bench Receiver",
+          drop_position: "WR",
+          detail: "RB · 9.4 proj · drop Bench Receiver (bench)",
+        }],
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        team: {},
+        verified: true,
+        public_api_confirmed: false,
+        message: "Dropped Bench Receiver. Free Agent is on your bench.",
+      }));
+    vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+      if (String(url).includes("/standings")) return jsonResponse([]);
+      return fetchMock(url, init);
+    });
+    const user = userEvent.setup();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <Chat leagueId="league-1" aiEnabled />
+      </QueryClientProvider>,
+    );
+
+    await user.type(screen.getByLabelText("Message"), "add Free Agent and drop Bench Receiver");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    const approval = await screen.findByTestId("roster-approval");
+    expect(approval).toHaveTextContent("Add Free Agent and drop Bench Receiver.");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByTestId("claim-approve"));
+    expect(await screen.findByTestId("claim-result")).toHaveTextContent("Dropped Bench Receiver. Free Agent is on your bench.");
+    const move = fetchMock.mock.calls[1];
+    expect(String(move[0])).toContain("/api/leagues/league-1/roster/add");
+    expect(JSON.parse(String(move[1].body))).toEqual({ player_id: "free-1", drop_player_id: "bench-1" });
+  });
+
+  it("mentions another team with @ and sends that team's id", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("/standings")) {
+        return jsonResponse([
+          { id: "mine", name: "Mike's Marauders", owner_name: "Mike", record: "2-1", is_user_team: true },
+          { id: "team-4", name: "Touchdown Titans", owner_name: "Sam", record: "4-2", is_user_team: false },
+        ]);
+      }
+      return jsonResponse({
+        message: "They start Rex.",
+        tools_used: ["get_team_roster"],
+        generated_by: "deterministic",
+        suggested_questions: [],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <Chat leagueId="league-1" aiEnabled />
+      </QueryClientProvider>,
+    );
+
+    const box = screen.getByLabelText("Message");
+    await user.type(box, "@Tou");
+    const option = await screen.findByRole("option", { name: /Touchdown Titans/ });
+    expect(screen.queryByRole("option", { name: /Mike's Marauders/ })).not.toBeInTheDocument();
+    await user.click(option);
+    expect(box).toHaveValue("@Touchdown Titans ");
+    await user.type(box, "who should I target?");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("They start Rex.")).toBeInTheDocument();
+    expect(screen.getByTestId("msg-user")).toHaveTextContent("@Touchdown Titans who should I target?");
+    expect(screen.getByTestId("msg-user")).not.toHaveTextContent("team_id");
+    const chatCall = fetchMock.mock.calls.find((call) => String(call[0]).includes("/ai/chat"));
+    const body = JSON.parse(String(chatCall?.[1]?.body));
+    expect(body.messages[0].content).toBe("@Touchdown Titans (team_id team-4) who should I target?");
   });
 });

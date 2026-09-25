@@ -1,5 +1,6 @@
 "use client";
 
+import { ProposeTradeDialog } from "@/components/propose-trade";
 import { NoLeague } from "@/components/no-league";
 import { PageHeader } from "@/components/page-header";
 import { RecommendationList } from "@/components/recommendation-card";
@@ -10,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { EmptyState, ErrorState, InlineError, SkeletonRows } from "@/components/ui/states";
 import { api } from "@/lib/api";
 import { useLeague } from "@/lib/league";
-import { usePlayers, useRecommendations, useTeam, useTrades } from "@/lib/queries";
+import { useLeagueDetail, usePlayers, useRecommendations, useTeam, useTrades } from "@/lib/queries";
 import type { Player, TradeAnalysis, TradeReview, Transaction } from "@/lib/types";
 import { cn, formatPoints } from "@/lib/utils";
 import { useMutation } from "@tanstack/react-query";
@@ -32,13 +33,27 @@ const VERDICT_STYLE: Record<TradeAnalysis["verdict"], string> = {
 };
 
 function TradesView({ leagueId }: { leagueId: string }) {
+  const { selected } = useLeague();
+  const detail = useLeagueDetail(leagueId);
   const team = useTeam(leagueId);
   const recs = useRecommendations(leagueId);
   const [search, setSearch] = useState("");
   const pool = usePlayers(leagueId, { search: search.length >= 2 ? search : undefined, available: false, limit: 30 });
   const [give, setGive] = useState<Player[]>([]);
   const [receive, setReceive] = useState<Player[]>([]);
+  const [confirming, setConfirming] = useState(false);
+  const [sent, setSent] = useState<string | null>(null);
+  const writes = selected?.provider === "sleeper" && !!detail.data?.account.writes_enabled;
   const analyze = useMutation({ mutationFn: () => api.ai.trade(leagueId, { give: give.map((p) => p.id), receive: receive.map((p) => p.id) }) });
+  const propose = useMutation({
+    mutationFn: () => api.leagues.proposeTrade(leagueId, { give: give.map((player) => player.id), receive: receive.map((player) => player.id) }),
+    onSuccess: (result) => {
+      setConfirming(false);
+      setSent(result.message);
+      setGive([]);
+      setReceive([]);
+    },
+  });
 
   const roster = useMemo(() => [...(team.data?.starters ?? []), ...(team.data?.bench ?? []), ...(team.data?.reserve ?? [])].map((s) => s.player!).filter(Boolean), [team.data]);
   const rosterIds = useMemo(() => new Set(roster.map((p) => p.id)), [roster]);
@@ -49,7 +64,7 @@ function TradesView({ leagueId }: { leagueId: string }) {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Trades" description="Review trades that already went through, or build a proposal. Nothing is submitted to the league." />
+      <PageHeader title="Trades" description="Review trades that already went through, or send an offer. The other manager accepts it in Sleeper." />
       <MadeTrades leagueId={leagueId} />
       <div className="grid gap-6 xl:grid-cols-3">
         <div className="space-y-6 xl:col-span-2">
@@ -85,10 +100,42 @@ function TradesView({ leagueId }: { leagueId: string }) {
                 <ArrowLeftRight className="h-4 w-4 text-slate-500" />
                 <Chips players={receive} onRemove={(p) => setReceive(receive.filter((x) => x.id !== p.id))} empty="Select players to receive" />
               </div>
-              <Button onClick={() => analyze.mutate()} disabled={!give.length || !receive.length} loading={analyze.isPending}>Analyze trade</Button>
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => analyze.mutate()} disabled={!give.length || !receive.length} loading={analyze.isPending}>Analyze trade</Button>
+                {writes ? (
+                  <Button
+                    variant="secondary"
+                    data-testid="propose-trade"
+                    disabled={!give.length || !receive.length}
+                    onClick={() => {
+                      propose.reset();
+                      setSent(null);
+                      setConfirming(true);
+                    }}
+                  >
+                    Propose trade
+                  </Button>
+                ) : null}
+              </div>
             </CardBody>
+            {detail.data && !writes ? (
+              <p className="px-5 pb-4 text-xs text-slate-500">Save a Sleeper token in Settings to send an offer.</p>
+            ) : null}
+            {sent ? <p className="px-5 pb-4 text-sm text-emerald-200" data-testid="propose-result">{sent}</p> : null}
             <InlineError error={analyze.error} />
           </Card>
+          {confirming ? (
+            <ProposeTradeDialog
+              give={give}
+              receive={receive}
+              pending={propose.isPending}
+              error={propose.error instanceof Error ? propose.error.message : null}
+              onSend={() => propose.mutate()}
+              onCancel={() => {
+                if (!propose.isPending) setConfirming(false);
+              }}
+            />
+          ) : null}
 
           {analyze.data ? <TradeResult analysis={analyze.data.analysis} generatedBy={analyze.data.generated_by} /> : null}
         </div>

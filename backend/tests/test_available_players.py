@@ -3,7 +3,9 @@
 from types import SimpleNamespace
 from uuid import uuid4
 
+from app.models.player import Player, PlayerExternalId
 from app.nfl_data.base import PlayerProjection
+from app.repositories.players import PlayerRepository
 from app.schemas.league import PlayerOut
 from app.services.league_context import LeagueContextService
 
@@ -73,3 +75,15 @@ async def test_a_name_search_stays_a_small_list():
     await service.available_players(_league(), position="RB", search="zack", limit=1)
     assert seen["limit"] == 1
     assert seen["query"] == "zack"
+
+
+async def test_flex_search_is_backs_receivers_and_tight_ends(session):
+    repo = PlayerRepository(session)
+    for name, pos in (("Arm", "QB"), ("Back", "RB"), ("Hands", "WR"), ("End", "TE"), ("Boot", "K")):
+        player = Player(name=name, last_name=name, position=pos, nfl_team="KC", fantasy_positions=[pos], extra={})
+        player.external_ids.append(PlayerExternalId(provider="sleeper", external_id=name))
+        session.add(player)
+    await session.flush()
+
+    rows = await repo.search(provider="sleeper", position="FLEX", limit=20)
+    assert {row.position for row in rows} == {"RB", "WR", "TE"}

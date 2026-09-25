@@ -78,7 +78,7 @@ class AIService:
         assert self.llm is not None
         registry = ToolRegistry()
         for tool in league_tool_registry.tools.values():
-            if tool.name not in {"change_lineup", "set_lineup"}:
+            if tool.name not in {"change_lineup", "set_lineup", "claim_player"}:
                 registry.register(tool)
         return Agent(self.llm, registry, max_rounds=self.max_tool_rounds)
 
@@ -161,6 +161,7 @@ class AIService:
             generated_by=self._generated_by(),
             suggested_questions=SUGGESTED[:3],
             actions=actions,
+            claims=list(ctx.pending_claims),
         )
 
     # ---- Waivers --------------------------------------------------------------------

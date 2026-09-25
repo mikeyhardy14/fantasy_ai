@@ -44,6 +44,7 @@ class ToolContext:
         self.writes = writes
         self.auto_approve = False
         self.pending_lineups: list = []
+        self.pending_claims: list = []
         self._team_ctx: TeamContext | None = None
         self.tools_used: list[str] = []
 

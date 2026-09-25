@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.nfl_data.base import ScheduleGame
 from app.nfl_data.sleeper_stats import RecentGame
@@ -162,7 +162,26 @@ class LineupUpdateRequest(BaseModel):
 
 
 class AddPlayerRequest(BaseModel):
-    player_id: UUID
+    player_id: UUID | None = None
+    drop_player_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def require_add_or_drop(self):
+        if self.player_id is None and self.drop_player_id is None:
+            raise ValueError("Choose a player to add or a player to drop.")
+        return self
+
+
+class ProposeTradeRequest(BaseModel):
+    give: list[UUID] = Field(min_length=1, max_length=6)
+    receive: list[UUID] = Field(min_length=1, max_length=6)
+
+
+class ProposeTradeResponse(BaseModel):
+    message: str
+    status: str
+    transaction_id: str | None = None
+    opponent_name: str
 
 
 class RosterMoveRequest(BaseModel):
@@ -216,6 +235,15 @@ class MatchupOut(BaseModel):
     status: str  # "upcoming" | "in_progress" | "final" | "bye"
     calls: list[SlotCallOut] = Field(default_factory=list)
     games: list[NflGameOut] = Field(default_factory=list)
+
+
+class LeagueMatchupOut(BaseModel):
+    week: int
+    is_bye: bool
+    involves_user: bool
+    status: str
+    team: MatchupSideOut
+    opponent: MatchupSideOut | None
 
 
 class StandingsRowOut(TeamSummaryOut):

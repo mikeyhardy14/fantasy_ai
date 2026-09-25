@@ -1,5 +1,7 @@
 """FastAPI dependency wiring (composition root)."""
 
+from __future__ import annotations
+
 from collections.abc import AsyncIterator
 from typing import Annotated
 from uuid import UUID
@@ -94,11 +96,16 @@ async def get_current_user(
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
-async def get_owned_league(league_id: UUID, session: SessionDep, user: CurrentUser) -> League:
+async def get_owned_league(
+    league_id: UUID, session: SessionDep, user: CurrentUser, providers: Providers
+) -> League:
     """Authorization boundary for every /leagues/{league_id} route."""
     league = await LeagueRepository(session).get_owned(user.id, league_id)
     if league is None:
         raise NotFoundError("League not found.")
+    from app.services.live_league import ensure_live
+
+    await ensure_live(league, session, providers)
     return league
 
 

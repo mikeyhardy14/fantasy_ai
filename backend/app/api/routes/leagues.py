@@ -21,10 +21,13 @@ from app.schemas.ai import RecommendationOut, WeeklyBriefing
 from app.schemas.league import (
     AddPlayerRequest,
     LeagueDetailOut,
+    LeagueMatchupOut,
     LeagueOut,
     LineupUpdateRequest,
     LineupUpdateResponse,
     MatchupOut,
+    ProposeTradeRequest,
+    ProposeTradeResponse,
     PlayerOut,
     PlayerSheetOut,
     RankingsOut,
@@ -41,14 +44,19 @@ from app.services.sync_service import SyncService
 router = APIRouter(prefix="/leagues", tags=["leagues"])
 log = get_logger(__name__)
 
-POSITIONS = {"QB", "RB", "WR", "TE", "K", "DEF", "DL", "LB", "DB"}
+POSITIONS = {"QB", "RB", "WR", "TE", "FLEX", "K", "DEF", "DL", "LB", "DB"}
 
 
 @router.get("", response_model=list[LeagueOut])
-async def list_leagues(user: CurrentUser, session: SessionDep, ctx: ContextService) -> list[LeagueOut]:
+async def list_leagues(
+    user: CurrentUser, session: SessionDep, ctx: ContextService, providers: Providers
+) -> list[LeagueOut]:
     from app.repositories import LeagueRepository
+    from app.services.live_league import ensure_live
 
     leagues = await LeagueRepository(session).list_for_user(user.id)
+    for league in leagues:
+        await ensure_live(league, session, providers)
     return [await ctx.league_out(lg) for lg in leagues]
 
 
@@ -62,6 +70,13 @@ async def get_team(
     league: OwnedLeague, ctx: ContextService, week: int | None = Query(default=None, ge=1, le=18)
 ) -> TeamOut:
     return await ctx.user_team_out(league, week)
+
+
+@router.get("/{league_id}/rosters", response_model=list[TeamOut])
+async def get_league_rosters(
+    league: OwnedLeague, ctx: ContextService, week: int | None = Query(default=None, ge=1, le=18)
+) -> list[TeamOut]:
+    return await ctx.league_rosters(league, week)
 
 
 @router.get("/{league_id}/teams/{team_id}", response_model=TeamOut)
@@ -141,6 +156,29 @@ async def get_matchup(
     return view
 
 
+@router.get("/{league_id}/matchups", response_model=list[LeagueMatchupOut])
+async def get_matchups(
+    league: OwnedLeague,
+    ctx: ContextService,
+    providers: Providers,
+    week: int | None = Query(default=None, ge=1, le=18),
+) -> list[LeagueMatchupOut]:
+    games = await ctx.week_matchups(league, week)
+    shown_week = games[0].week if games else (week or league.current_week)
+    if league.provider != Provider.SLEEPER.value or shown_week != league.current_week:
+        return games
+    client = getattr(providers.get(league.provider), "client", None)
+    if client is None:
+        return games
+    try:
+        raw = await client.get_matchups(league.external_league_id, shown_week)
+        if isinstance(raw, list):
+            await ctx.apply_live_week_points(league, games, raw)
+    except Exception as exc:  # noqa: BLE001 - a stale score is better than a failed matchup page
+        log.warning("matchup.live_points_failed", error=str(exc))
+    return games
+
+
 @router.get("/{league_id}/players/{player_id}", response_model=PlayerSheetOut)
 async def get_player_sheet(
     player_id: UUID,
@@ -195,6 +233,20 @@ async def get_standings(league: OwnedLeague, ctx: ContextService) -> list[Standi
 @router.get("/{league_id}/trades", response_model=list[TransactionOut])
 async def get_trades(league: OwnedLeague, ctx: ContextService) -> list[TransactionOut]:
     return await ctx.league_trades(league)
+
+
+@router.post("/{league_id}/trades", response_model=ProposeTradeResponse)
+async def propose_trade(
+    body: ProposeTradeRequest,
+    league: OwnedLeague,
+    session: SessionDep,
+    providers: Providers,
+    ctx: ContextService,
+    cipher: CipherDep,
+    settings: SettingsDep,
+) -> ProposeTradeResponse:
+    service = build_sleeper_write_service(session, ctx, providers, cipher, settings.sleeper_graphql_url)
+    return await service.propose_trade(league, body.give, body.receive)
 
 
 @router.get("/{league_id}/transactions", response_model=list[TransactionOut])

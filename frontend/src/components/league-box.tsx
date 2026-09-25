@@ -169,7 +169,7 @@ export function LeagueBox({
         {loading ? (
           <li className="px-4 py-6 text-center text-[11px] text-slate-500">Loading starters…</li>
         ) : (team?.starters.length ?? 0) === 0 ? (
-          <li className="px-4 py-6 text-center text-[11px] text-slate-500">No starters synced</li>
+          <li className="px-4 py-6 text-center text-[11px] text-slate-500">No starters</li>
         ) : (
           team?.starters.map((slot, index) => {
             const problem = slotHasProblem(slot);
