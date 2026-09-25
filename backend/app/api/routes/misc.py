@@ -18,6 +18,7 @@ async def health(settings: SettingsDep, state: StateDep) -> dict:
         "environment": settings.environment,
         "ai_enabled": state.llm is not None,
         "ai_provider": getattr(state.llm, "provider", None) if state.llm is not None else None,
+        "ai_model": getattr(state.llm, "model", None) if state.llm is not None else None,
         "demo_enabled": settings.demo_enabled,
         "nfl_data_provider": state.nfl_data.name,
     }

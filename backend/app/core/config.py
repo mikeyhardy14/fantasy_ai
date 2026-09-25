@@ -19,7 +19,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_name: str = "Fantasy AI"
+    app_name: str = "OMAHA"
     environment: str = Field(default="development")
     log_level: str = "INFO"
 
@@ -37,7 +37,7 @@ class Settings(BaseSettings):
 
     # Free tool-calling models. Gemini is used when its key is set, then Groq, then OpenAI.
     gemini_api_key: str | None = None
-    gemini_model: str = "gemini-3.8-flash"
+    gemini_model: str = "gemini-3.5-flash-lite"
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
     groq_api_key: str | None = None
     groq_model: str = "llama-3.3-70b-versatile"

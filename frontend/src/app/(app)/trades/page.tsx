@@ -10,8 +10,8 @@ import { Input } from "@/components/ui/input";
 import { EmptyState, ErrorState, InlineError, SkeletonRows } from "@/components/ui/states";
 import { api } from "@/lib/api";
 import { useLeague } from "@/lib/league";
-import { usePlayers, useRecommendations, useTeam } from "@/lib/queries";
-import type { Player, TradeAnalysis } from "@/lib/types";
+import { usePlayers, useRecommendations, useTeam, useTrades } from "@/lib/queries";
+import type { Player, TradeAnalysis, TradeReview, Transaction } from "@/lib/types";
 import { cn, formatPoints } from "@/lib/utils";
 import { useMutation } from "@tanstack/react-query";
 import { ArrowLeftRight, X } from "lucide-react";
@@ -49,7 +49,8 @@ function TradesView({ leagueId }: { leagueId: string }) {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Trades" description="Build a proposal and get a grounded evaluation. Trades are never submitted automatically." />
+      <PageHeader title="Trades" description="Review trades that already went through, or build a proposal. Nothing is submitted to the league." />
+      <MadeTrades leagueId={leagueId} />
       <div className="grid gap-6 xl:grid-cols-3">
         <div className="space-y-6 xl:col-span-2">
           <div className="grid gap-6 md:grid-cols-2">
@@ -102,6 +103,82 @@ function TradesView({ leagueId }: { leagueId: string }) {
   );
 }
 
+function MadeTrades({ leagueId }: { leagueId: string }) {
+  const trades = useTrades(leagueId);
+  const [reviews, setReviews] = useState<Record<string, TradeReview>>({});
+  const review = useMutation({
+    mutationFn: (id: string) => api.ai.reviewTrade(leagueId, id),
+    onSuccess: (result, id) => setReviews((current) => ({ ...current, [id]: result })),
+  });
+  const rows = trades.data ?? [];
+  return (
+    <Card>
+      <CardHeader title="Trades that were made" description="Scored from this week's projections. Asking the assistant to review trades uses the same record." />
+      {trades.isLoading ? (
+        <CardBody>
+          <SkeletonRows rows={3} />
+        </CardBody>
+      ) : trades.error ? (
+        <ErrorState error={trades.error} onRetry={() => trades.refetch()} />
+      ) : rows.length ? (
+        <CardBody className="space-y-4">
+          {rows.map((trade) => (
+            <div key={trade.id} className="border border-surface-border px-4 py-3" data-testid="made-trade">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-slate-100">
+                  {trade.team_names.join(" ↔ ") || "Trade"}
+                  <span className="ml-2 text-xs uppercase tracking-wide text-slate-500">
+                    {trade.status}
+                    {trade.week ? ` · Week ${trade.week}` : ""}
+                    {trade.involves_user ? " · Your roster" : ""}
+                  </span>
+                </p>
+                <Button
+                  onClick={() => review.mutate(trade.id)}
+                  loading={review.isPending && review.variables === trade.id}
+                  disabled={review.isPending}
+                >
+                  Review
+                </Button>
+              </div>
+              <ul className="mt-2 space-y-1 text-sm text-slate-300">
+                {receivedLines(trade).map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+              {trade.picks?.length ? <p className="mt-2 text-xs text-slate-500">Picks: {trade.picks.join(", ")}</p> : null}
+              {reviews[trade.id] ? (
+                <div className="mt-3">
+                  <TradeResult
+                    analysis={reviews[trade.id].analysis}
+                    generatedBy={reviews[trade.id].generated_by}
+                    giveLabel={reviews[trade.id].involves_user ? "You sent" : `${reviews[trade.id].perspective} sent`}
+                    receiveLabel={reviews[trade.id].involves_user ? "You received" : `${reviews[trade.id].perspective} received`}
+                  />
+                </div>
+              ) : null}
+            </div>
+          ))}
+          <InlineError error={review.error} />
+        </CardBody>
+      ) : (
+        <EmptyState title="No completed trades" description="When a trade is recorded in the league, it shows up here for review." className="py-6" />
+      )}
+    </Card>
+  );
+}
+
+function receivedLines(trade: Transaction): string[] {
+  const byTeam = new Map<string, string[]>();
+  for (const add of trade.adds) {
+    const team = add.team_name ?? "Unknown team";
+    const names = byTeam.get(team) ?? [];
+    names.push(add.player_name ?? "Unknown");
+    byTeam.set(team, names);
+  }
+  return [...byTeam.entries()].map(([team, names]) => `${team} received ${names.join(", ")}`);
+}
+
 function PickRow({ p, active, onClick }: { p: Player; active: boolean; onClick: () => void }) {
   return (
     <button onClick={onClick} className={cn("flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm transition hover:bg-surface-overlay", active && "bg-brand-soft/40 ring-1 ring-inset ring-emerald-500/40")}>
@@ -111,7 +188,10 @@ function PickRow({ p, active, onClick }: { p: Player; active: boolean; onClick: 
         <span className="text-xs text-slate-500">{p.nfl_team ?? "FA"}</span>
         {p.injury_status ? <Badge className="bg-amber-500/15 text-amber-200 ring-amber-500/30">{p.injury_status}</Badge> : null}
       </span>
-      <span className="text-xs tabular-nums text-slate-400">{formatPoints(p.projected_points)}</span>
+      <span className="text-right text-xs tabular-nums text-slate-400">
+        <span className="block" title="Points scored this season">{formatPoints(p.season_points)}</span>
+        <span className="block text-[10px] text-slate-500">proj {formatPoints(p.projected_points)}</span>
+      </span>
     </button>
   );
 }
@@ -130,18 +210,28 @@ function Chips({ players, onRemove, empty }: { players: Player[]; onRemove: (p: 
   );
 }
 
-function TradeResult({ analysis, generatedBy }: { analysis: TradeAnalysis; generatedBy: string }) {
+function TradeResult({
+  analysis,
+  generatedBy,
+  giveLabel = "You give",
+  receiveLabel = "You receive",
+}: {
+  analysis: TradeAnalysis;
+  generatedBy: string;
+  giveLabel?: string;
+  receiveLabel?: string;
+}) {
   return (
     <Card data-testid="trade-result">
       <CardHeader
         title={<span className="flex items-center gap-2">Verdict <Badge className={VERDICT_STYLE[analysis.verdict]}>{analysis.verdict}</Badge></span>}
-        action={<Badge className="bg-slate-500/15 text-slate-400 ring-slate-500/30">{generatedBy === "openai" ? "AI" : "Rule-based"}</Badge>}
+        action={<Badge className="bg-slate-500/15 text-slate-400 ring-slate-500/30">{generatedBy === "deterministic" ? "Rule-based" : "AI"}</Badge>}
       />
       <CardBody className="space-y-4">
         <p className="text-sm text-slate-200">{analysis.summary}</p>
         <div className="grid gap-3 sm:grid-cols-2">
-          <SideBox label="You give" side={analysis.you_give} />
-          <SideBox label="You receive" side={analysis.you_receive} />
+          <SideBox label={giveLabel} side={analysis.you_give} />
+          <SideBox label={receiveLabel} side={analysis.you_receive} />
         </div>
         <Section title="Roster impact" items={analysis.roster_impact} />
         <Section title="Lineup impact" items={analysis.lineup_impact} />

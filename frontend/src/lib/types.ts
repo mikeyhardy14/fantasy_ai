@@ -135,12 +135,15 @@ export interface RankingRow {
   books: string[];
   projected_points: number | null;
   projection_source: string | null;
+  season_points: number | null;
   vorp: number | null;
+  owned?: "you" | "league" | null;
 }
 
 export interface Rankings {
   week: number;
   notes: string[];
+  truncated?: boolean;
   rows: RankingRow[];
 }
 
@@ -151,6 +154,8 @@ export interface ScheduleGame {
   spread: number | null;
   total: number | null;
   implied_points: number | null;
+  starts_at?: string | null;
+  state?: "pre" | "in" | "post" | null;
 }
 
 export type Flag =
@@ -170,6 +175,7 @@ export interface RosterSlot {
   is_starter: boolean;
   player: Player | null;
   points: number | null;
+  stat_line?: string | null;
   flags: Flag[];
 }
 
@@ -215,12 +221,32 @@ export interface MatchupSide {
   starters: RosterSlot[];
 }
 
+export interface SlotCall {
+  slot_index: number;
+  start_name: string;
+  win_prob: number;
+  confidence: string;
+}
+
+export interface NflGame {
+  away: string;
+  home: string;
+  away_score: number | null;
+  home_score: number | null;
+  state: "pre" | "in" | "post" | null;
+  detail: string | null;
+  summary: string | null;
+  broadcast: string | null;
+}
+
 export interface Matchup {
   week: number;
   is_bye: boolean;
   user: MatchupSide;
   opponent: MatchupSide | null;
   status: "upcoming" | "in_progress" | "final" | "bye";
+  calls?: SlotCall[];
+  games?: NflGame[];
 }
 
 export interface StandingsRow extends TeamSummary {
@@ -246,6 +272,7 @@ export interface Transaction {
   team_names: string[];
   faab_bid: number | null;
   involves_user: boolean;
+  picks?: string[];
 }
 
 export interface PositionNeed {
@@ -330,11 +357,34 @@ export interface ChatMessage {
   content: string;
 }
 
+export interface LineupAction {
+  label: string;
+  summary?: string;
+  player_id: string;
+  player_name: string;
+  position: string | null;
+  headshot_url: string | null;
+  destination: "starter";
+  slot_index: number;
+  slot: string;
+  week: number;
+  replaces: string | null;
+  detail: string | null;
+}
+
 export interface ChatResponse {
   message: string;
   tools_used: string[];
   generated_by: "openai" | "gemini" | "groq" | "deterministic";
   suggested_questions: string[];
+  actions?: LineupAction[];
+}
+
+export interface WaiverSuggestions {
+  message: string;
+  generated_by: "openai" | "gemini" | "groq" | "deterministic";
+  model: string | null;
+  tools_used: string[];
 }
 
 export interface TradeSide {
@@ -353,6 +403,18 @@ export interface TradeAnalysis {
   lineup_impact: string[];
   risks: string[];
   data_gaps: string[];
+}
+
+export interface TradeReview {
+  transaction_id: string;
+  week: number | null;
+  status: string;
+  teams: string[];
+  involves_user: boolean;
+  perspective: string;
+  picks: string[];
+  analysis: TradeAnalysis;
+  generated_by: "openai" | "gemini" | "groq" | "deterministic";
 }
 
 export interface TradeAnalysisResponse {
@@ -387,6 +449,7 @@ export interface HealthResponse {
   environment: string;
   ai_enabled: boolean;
   ai_provider: "gemini" | "groq" | "openai" | null;
+  ai_model: string | null;
   demo_enabled: boolean;
   nfl_data_provider: string;
 }

@@ -21,12 +21,18 @@ from app.core.errors import (
 from app.core.logging import get_logger
 from app.core.security import CredentialCipher
 from app.domain.enums import NON_LINEUP_SLOTS, Provider
-from app.intelligence.lineup import is_eligible
+from app.intelligence.lineup import eligible_for_ir, is_eligible
 from app.models import FantasyAccount, League, RosterEntry
 from app.providers.sleeper.graphql import SleeperGraphQL
 from app.providers.sleeper.provider import SleeperProvider
 from app.repositories import FantasyAccountRepository, RosterRepository
-from app.schemas.league import LineupUpdateRequest, LineupUpdateResponse, PlayerOut, RosterMoveRequest
+from app.schemas.league import (
+    AddPlayerRequest,
+    LineupUpdateRequest,
+    LineupUpdateResponse,
+    PlayerOut,
+    RosterMoveRequest,
+)
 from app.services.league_context import LeagueContextService
 
 log = get_logger(__name__)
@@ -251,6 +257,8 @@ class SleeperWriteService:
                 desired_starters[seat.slot_index] = EMPTY
             desired_reserve = [player_id for player_id in desired_reserve if player_id != seat.external_id]
         elif body.destination == "ir":
+            if not eligible_for_ir(seat.injury_status, seat.status, league.roster_settings):
+                raise ValidationFailed(f"{seat.name} is not eligible for IR.")
             capacity = _ir_capacity(league)
             if capacity <= 0:
                 raise ValidationFailed("This league has no IR slots.")
@@ -347,6 +355,101 @@ class SleeperWriteService:
             public_api_confirmed=confirmed_public,
             message=_move_message(seat.name, where, confirmed_public),
         )
+
+    async def add_player(self, league: League, body: AddPlayerRequest) -> LineupUpdateResponse:
+        """Add a player nobody in the league owns onto the user's bench."""
+        if league.provider != Provider.SLEEPER:
+            raise ValidationFailed("Adding a player is only available for Sleeper leagues.")
+        week = league.current_week
+        team = await self.context.user_team(league)
+        if team is None:
+            raise NotFoundError("We could not find your team in this league.")
+        player = await self.context.players.get(body.player_id)
+        if player is None:
+            raise NotFoundError("Player not found.")
+        external_id = player.external_id_for(Provider.SLEEPER)
+        if not external_id:
+            raise ValidationFailed(f"{player.name} has no Sleeper id, so they cannot be added.")
+
+        rostered = await self.rosters.list_for_league(league.id, week)
+        if any(entry.player_id == player.id for entry in rostered):
+            raise ValidationFailed(f"Someone already has {player.name}.")
+        cap = league.roster_settings.get("max_roster_size")
+        mine = [entry for entry in rostered if entry.fantasy_team_id == team.id]
+        if cap is not None and len(mine) >= int(cap):
+            raise ValidationFailed("Your roster is full. Drop someone before adding a player.")
+
+        token = self._token_for(league.fantasy_account)
+        graphql = SleeperGraphQL(self.graphql_url, token)
+        roster_id = _roster_id(team.external_team_id)
+        try:
+            tx = await graphql.add_free_agent(
+                league_id=league.external_league_id,
+                roster_id=roster_id,
+                week=week,
+                player_id=external_id,
+            )
+        except ProviderAuthError as exc:
+            raise ValidationFailed(str(exc.message)) from exc
+        except ProviderError as exc:
+            raise ValidationFailed(str(exc.message)) from exc
+
+        status = str(tx.get("status") or "complete").lower()
+        if status in {"pending", "failed", "rejected", "cancelled", "canceled"}:
+            team_out = await self.context.user_team_out(league, week)
+            waiting = status == "pending"
+            return LineupUpdateResponse(
+                team=team_out,
+                verified=False,
+                public_api_confirmed=False,
+                message=(
+                    f"Sleeper has a claim in for {player.name}. They join your roster when it clears."
+                    if waiting
+                    else f"Sleeper did not add {player.name} ({status})."
+                ),
+            )
+
+        self.session.add(
+            RosterEntry(
+                fantasy_team_id=team.id,
+                player_id=player.id,
+                week=week,
+                roster_slot="BN",
+                is_starter=False,
+                slot_index=None,
+            )
+        )
+        await self.session.commit()
+        public = await self._public_has_player(league.external_league_id, roster_id, external_id)
+        team_out = await self.context.user_team_out(league, week)
+        lead = f"{player.name} is on your bench."
+        if public is True:
+            message = f"{lead} The public roster matches."
+        elif public is False:
+            message = (
+                f"{lead} Sleeper confirmed the add. The public roster API still shows the previous roster; "
+                "it is cached and can lag for a few minutes."
+            )
+        else:
+            message = f"{lead} Sleeper confirmed the add. The public roster API could not be re-read."
+        return LineupUpdateResponse(
+            team=team_out,
+            verified=True,
+            public_api_confirmed=public,
+            message=message,
+        )
+
+    async def _public_has_player(self, league_id: str, roster_id: int, player_id: str) -> bool | None:
+        try:
+            rosters = await self.sleeper.client.get_rosters(league_id)
+        except ProviderError:
+            return None
+        for roster in rosters:
+            if str(roster.get("roster_id")) != str(roster_id):
+                continue
+            players = roster.get("players") or []
+            return str(player_id) in {str(item) for item in players}
+        return False
 
     async def _push_starters(
         self,
@@ -552,6 +655,8 @@ class _Seat:
         self.is_starter = entry.is_starter
         self.slot_index = entry.slot_index
         self.view = _player_view(entry)
+        self.injury_status = player.injury_status
+        self.status = player.status
 
 
 def _seat(entry: RosterEntry) -> _Seat:

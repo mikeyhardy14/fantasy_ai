@@ -10,9 +10,22 @@ from uuid import UUID
 
 from app.ai import fallback, prompts
 from app.ai.agent import Agent
+from app.ai.approvals import swaps_mentioned
 from app.ai.llm import LLMClient
+from app.ai.subs import sub_proposal
 from app.ai.tools import ToolContext, league_tool_registry
-from app.core.errors import ValidationFailed
+from app.ai.tools.base import ToolRegistry
+from app.ai.trade_review import (
+    exchanges,
+    format_review,
+    is_trade_review,
+    other_teams,
+    player_ids,
+    reviewable,
+    score_exchange,
+    user_exchange,
+)
+from app.core.errors import AppError, NotFoundError, ValidationFailed
 from app.core.logging import get_logger
 from app.intelligence.briefing import build_briefing
 from app.intelligence.recommendations import generate_recommendations
@@ -25,8 +38,11 @@ from app.schemas.ai import (
     TradeAnalysis,
     TradeAnalysisRequest,
     TradeAnalysisResponse,
+    TradeReviewResponse,
+    WaiverSuggestionsResponse,
     WeeklyBriefing,
 )
+from app.schemas.league import PlayerOut, TransactionOut
 
 log = get_logger(__name__)
 
@@ -57,6 +73,15 @@ class AIService:
         assert self.llm is not None
         return Agent(self.llm, league_tool_registry, max_rounds=self.max_tool_rounds)
 
+    def _advice_agent(self) -> Agent:
+        """Same tools as chat, without the lineup writes."""
+        assert self.llm is not None
+        registry = ToolRegistry()
+        for tool in league_tool_registry.tools.values():
+            if tool.name not in {"change_lineup", "set_lineup"}:
+                registry.register(tool)
+        return Agent(self.llm, registry, max_rounds=self.max_tool_rounds)
+
     async def _system(self, ctx: ToolContext) -> dict:
         tc = await ctx.team_context()
         return {
@@ -84,8 +109,9 @@ class AIService:
         messages = [await self._system(ctx), {"role": "user", "content": prompts.ANALYSIS_INSTRUCTIONS}]
         result = await self._agent().run(messages, ctx, response_model=TeamAnalysis, temperature=0.2)
         assert isinstance(result.structured, TeamAnalysis)
+        analysis = fallback.omit_false_season_gap(result.structured, tc)
         return TeamAnalysisResponse(
-            analysis=result.structured,
+            analysis=analysis,
             recommendations=rec_out,
             generated_by=self._generated_by(),
             model=result.model,
@@ -97,19 +123,65 @@ class AIService:
     async def chat(self, ctx: ToolContext, history: list[ChatMessageIn]) -> ChatResponse:
         if history[-1].role != "user":
             raise ValidationFailed("The last message must be from the user.")
+        tc = await ctx.team_context()
+        proposal = sub_proposal(tc.team, tc.week, history[-1].content)
+        if proposal is not None:
+            message, actions = proposal
+            return ChatResponse(
+                message=message,
+                tools_used=["get_roster"],
+                generated_by="deterministic",
+                suggested_questions=SUGGESTED[:3],
+                actions=actions,
+            )
+        if is_trade_review(history[-1].content):
+            return ChatResponse(
+                message=await self.made_trades_message(ctx),
+                tools_used=["get_recent_transactions"],
+                generated_by="deterministic",
+                suggested_questions=SUGGESTED[:3],
+            )
         if not self.enabled:
-            tc = await ctx.team_context()
             recs = generate_recommendations(tc)
-            return fallback.deterministic_chat(tc, recs, history[-1].content)
+            response = fallback.deterministic_chat(tc, recs, history[-1].content)
+            response.actions = swaps_mentioned(tc.team, tc.week, response.message)
+            return response
 
         messages = [await self._system(ctx), {"role": "system", "content": prompts.CHAT_INSTRUCTIONS}]
         messages += [{"role": m.role, "content": m.content} for m in history[-20:]]
         result = await self._agent().run(messages, ctx, temperature=0.4)
+        message = result.content or "I could not produce an answer. Please try rephrasing."
+        wrote = {"change_lineup", "set_lineup"} & set(result.tools_used)
+        actions = list(ctx.pending_lineups)
+        if not wrote:
+            actions.extend(swaps_mentioned(tc.team, tc.week, message))
         return ChatResponse(
-            message=result.content or "I could not produce an answer. Please try rephrasing.",
+            message=message,
             tools_used=sorted(set(result.tools_used)),
             generated_by=self._generated_by(),
             suggested_questions=SUGGESTED[:3],
+            actions=actions,
+        )
+
+    # ---- Waivers --------------------------------------------------------------------
+
+    async def suggest_waivers(self, ctx: ToolContext) -> WaiverSuggestionsResponse:
+        tc = await ctx.team_context()
+        recs = generate_recommendations(tc)
+        if not self.enabled:
+            return WaiverSuggestionsResponse(message=fallback.deterministic_waivers(tc, recs), generated_by="deterministic")
+
+        messages = [await self._system(ctx), {"role": "user", "content": prompts.WAIVER_INSTRUCTIONS}]
+        try:
+            result = await self._advice_agent().run(messages, ctx, temperature=0.3)
+        except AppError as exc:
+            log.warning("ai.waivers_failed", error=exc.message)
+            return WaiverSuggestionsResponse(message=fallback.deterministic_waivers(tc, recs), generated_by="deterministic")
+        return WaiverSuggestionsResponse(
+            message=result.content or fallback.deterministic_waivers(tc, recs),
+            generated_by=self._generated_by() if result.content else "deterministic",
+            model=result.model,
+            tools_used=sorted(set(result.tools_used)),
         )
 
     # ---- Trade --------------------------------------------------------------------
@@ -146,6 +218,99 @@ class AIService:
         result = await self._agent().run(messages, ctx, response_model=TradeAnalysis, temperature=0.2)
         assert isinstance(result.structured, TradeAnalysis)
         return TradeAnalysisResponse(analysis=result.structured, generated_by=self._generated_by())
+
+    async def made_trades_message(self, ctx: ToolContext) -> str:
+        trades = reviewable(await ctx.service.league_trades(ctx.league))
+        if not trades:
+            return "No completed trades are in this league's record."
+        reviews = [await self.review_trade(ctx, trade.id, use_model=False) for trade in trades[:6]]
+        lines = [format_review(review) for review in reviews]
+        if len(trades) > 6:
+            lines.append("Older trades are on the Trades page.")
+        return "\n\n".join(lines)
+
+    async def review_trade(self, ctx: ToolContext, transaction_id: UUID, *, use_model: bool = True) -> TradeReviewResponse:
+        trade = await ctx.service.get_trade(ctx.league, transaction_id)
+        user = await ctx.service.user_team(ctx.league)
+        rows = exchanges(trade.adds, trade.drops)
+        mine = user_exchange(rows, str(user.id) if user else None)
+        actor = mine or (rows[0] if rows else None)
+        if actor is None or not player_ids(actor.sent) or not player_ids(actor.received):
+            raise ValidationFailed("That trade does not have players on both sides to review.")
+        give = await self._trade_players(ctx, player_ids(actor.sent))
+        receive = await self._trade_players(ctx, player_ids(actor.received))
+        yours = mine is not None
+        analysis = score_exchange(
+            actor=actor.team_name,
+            other=other_teams(rows, actor),
+            give=give,
+            receive=receive,
+            picks=trade.picks,
+            yours=yours,
+            already_done=trade.status == "complete",
+        )
+        generated_by = "deterministic"
+        if use_model and self.enabled:
+            drafted = await self._narrate_trade(ctx, trade, analysis, yours)
+            if drafted is not None:
+                analysis = drafted
+                generated_by = self._generated_by()
+        return TradeReviewResponse(
+            transaction_id=trade.id,
+            week=trade.week,
+            status=trade.status,
+            teams=trade.team_names,
+            involves_user=yours,
+            perspective=actor.team_name,
+            picks=trade.picks,
+            analysis=analysis,
+            generated_by=generated_by,
+        )
+
+    async def _trade_players(self, ctx: ToolContext, ids: list[str]) -> list[PlayerOut]:
+        players: list[PlayerOut] = []
+        for pid in ids:
+            try:
+                players.append(await ctx.service.get_player_in_league(ctx.league, _uuid(pid), ctx.week))
+            except NotFoundError as exc:
+                raise ValidationFailed("A player in that trade is no longer in the league pool.") from exc
+        return players
+
+    async def _narrate_trade(
+        self, ctx: ToolContext, trade: TransactionOut, analysis: TradeAnalysis, yours: bool
+    ) -> TradeAnalysis | None:
+        if yours:
+            role = "This trade included the user's roster."
+        else:
+            role = "The user's roster was not in this trade. Judge the named team, not the user."
+        facts = {
+            "status": trade.status,
+            "week": trade.week,
+            "teams": trade.team_names,
+            "picks": trade.picks,
+            "assessment": analysis.model_dump(mode="json"),
+            "instruction": (
+                f"{role} The trade is already {trade.status}. Use only the assessment facts. "
+                "Do not tell anyone to submit, accept, or reject it in Sleeper. "
+                "ACCEPT means the receiving side gained projected points, REJECT means they gave them up, "
+                "NEGOTIATE means the sides are close, UNCLEAR means a projection is missing."
+            ),
+        }
+        try:
+            assert self.llm is not None
+            resp = await self.llm.complete(
+                [
+                    await self._system(ctx),
+                    {"role": "system", "content": prompts.TRADE_REVIEW_INSTRUCTIONS},
+                    {"role": "user", "content": f"Completed trade facts:\n{facts}"},
+                ],
+                response_model=TradeAnalysis,
+                temperature=0.2,
+            )
+            return TradeAnalysis.model_validate_json(resp.content or "")
+        except Exception as exc:  # noqa: BLE001 - the scored review still stands
+            log.warning("ai.trade_review_failed", error=str(exc))
+            return None
 
     # ---- Briefing -------------------------------------------------------------------
 

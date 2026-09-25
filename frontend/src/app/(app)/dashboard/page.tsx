@@ -5,7 +5,7 @@ import { BriefingCard } from "@/components/briefing-card";
 import { NoLeague } from "@/components/no-league";
 import { PageHeader } from "@/components/page-header";
 import { RecommendationList } from "@/components/recommendation-card";
-import { LineupBoard } from "@/components/lineup-board";
+import { irRulesFromSettings, LineupBoard } from "@/components/lineup-board";
 import { RosterTable } from "@/components/roster-table";
 import { TransactionList } from "@/components/transaction-list";
 import { Badge, FlagBadges, PositionBadge } from "@/components/ui/badge";
@@ -155,7 +155,7 @@ function Dashboard({ leagueId }: { leagueId: string }) {
               title="Starting lineup"
               description={
                 writesEnabled
-                  ? "Drag a player onto a slot, the bench, or IR. Or click the slot box."
+                  ? "Click a starter to sub in a bench player. Drag still moves anyone to a slot, the bench, or IR."
                   : team.data?.lineup_issues.length
                     ? `${team.data.lineup_issues.length} issue${team.data.lineup_issues.length > 1 ? "s" : ""} detected`
                     : "Lineup looks legal"
@@ -170,6 +170,7 @@ function Dashboard({ leagueId }: { leagueId: string }) {
               <LineupBoard
                 team={team.data}
                 irCapacity={Math.max(reserveSlots, reservePositions)}
+                irRules={irRulesFromSettings(detail.data?.roster_settings)}
                 pending={movePlayer.isPending}
                 notice={lineupNotice}
                 onMove={(move) => movePlayer.mutate(move)}

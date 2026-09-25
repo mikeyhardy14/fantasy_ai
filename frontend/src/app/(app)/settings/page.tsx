@@ -9,13 +9,14 @@ import { EmptyState, InlineError, SkeletonRows } from "@/components/ui/states";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useLeague } from "@/lib/league";
+import { readLineupAutoApprove, writeLineupAutoApprove } from "@/lib/lineup-approval";
 import { useHealth } from "@/lib/queries";
 import { aiStatusLabel, formatDate, PROVIDER_LABELS } from "@/lib/utils";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export default function SettingsPage() {
   const { user } = useAuth();
@@ -47,6 +48,8 @@ export default function SettingsPage() {
             </dl>
           </CardBody>
         </Card>
+
+        <AssistantApproval />
 
         <Card>
           <CardHeader title="Server" />
@@ -148,6 +151,35 @@ export default function SettingsPage() {
         </Card>
       </div>
     </div>
+  );
+}
+
+function AssistantApproval() {
+  const [on, setOn] = useState(false);
+  useEffect(() => setOn(readLineupAutoApprove()), []);
+  return (
+    <Card>
+      <CardHeader title="Assistant" description="When the assistant says to start one player over another." />
+      <CardBody>
+        <label className="flex items-start gap-3 text-sm">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={on}
+            onChange={(event) => {
+              writeLineupAutoApprove(event.target.checked);
+              setOn(event.target.checked);
+            }}
+          />
+          <span>
+            <span className="font-medium text-slate-100">Auto-approve lineup moves</span>
+            <span className="mt-1 block text-xs leading-relaxed text-slate-400">
+              A recommended start-over is written to this week&apos;s lineup as soon as the assistant proposes it. Leave this off and the chat shows the move for you to approve.
+            </span>
+          </span>
+        </label>
+      </CardBody>
+    </Card>
   );
 }
 

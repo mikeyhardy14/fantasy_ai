@@ -46,6 +46,23 @@ mutation($league_id: Snowflake!, $roster_id: Int!, $reserve: [String]) {
 }
 """.strip()
 
+ADD_FREE_AGENT = """
+mutation($league_id: Snowflake!, $roster_id: Int!, $leg: Int!, $adds: [Map]!) {
+  league_create_roster_transaction(
+    league_id: $league_id
+    type: "free_agent"
+    roster_id: $roster_id
+    leg: $leg
+    adds: $adds
+    drops: []
+  ) {
+    transaction_id
+    status
+    adds
+  }
+}
+""".strip()
+
 READ_ROSTERS = """
 query($league_id: Snowflake!) {
   league_rosters(league_id: $league_id) {
@@ -156,6 +173,21 @@ class SleeperGraphQL:
                     return None
                 return [str(s) for s in starters]
         return None
+
+    async def add_free_agent(self, *, league_id: str, roster_id: int, week: int, player_id: str) -> dict[str, Any]:
+        data = await self.execute(
+            ADD_FREE_AGENT,
+            {
+                "league_id": league_id,
+                "roster_id": roster_id,
+                "leg": week,
+                "adds": [{"player_id": player_id, "roster_id": roster_id}],
+            },
+        )
+        tx = data.get("league_create_roster_transaction")
+        if not isinstance(tx, dict):
+            raise ProviderError("Sleeper did not confirm the add.", provider="sleeper")
+        return tx
 
     async def set_reserve(self, *, league_id: str, roster_id: int, reserve: list[str]) -> None:
         await self.execute(

@@ -18,7 +18,9 @@ import type {
   TeamAnalysisResponse,
   TokenResponse,
   TradeAnalysisResponse,
+  TradeReview,
   Transaction,
+  WaiverSuggestions,
   User,
   WeeklyBriefing,
 } from "./types";
@@ -137,15 +139,20 @@ export const api = {
     list: () => request<League[]>("/api/leagues"),
     get: (id: string) => request<LeagueDetail>(`/api/leagues/${id}`),
     team: (id: string, week?: number) => request<Team>(`/api/leagues/${id}/team${qs({ week })}`),
+    otherTeam: (id: string, teamId: string, week?: number) =>
+      request<Team>(`/api/leagues/${id}/teams/${teamId}${qs({ week })}`),
     matchup: (id: string, week?: number) => request<Matchup | null>(`/api/leagues/${id}/matchup${qs({ week })}`),
     players: (id: string, params: { position?: string; search?: string; available?: boolean; limit?: number } = {}) =>
       request<Player[]>(`/api/leagues/${id}/players${qs(params)}`),
     playerSheet: (id: string, playerId: string, week?: number) =>
       request<PlayerSheet>(`/api/leagues/${id}/players/${playerId}${qs({ week })}`),
-    rankings: (id: string, params: { week?: number; position?: string } = {}) =>
-      request<Rankings>(`/api/leagues/${id}/rankings${qs(params)}`),
+    rankings: (
+      id: string,
+      params: { week?: number; position?: string; q?: string; team?: string; scope?: string } = {},
+    ) => request<Rankings>(`/api/leagues/${id}/rankings${qs(params)}`),
     standings: (id: string) => request<StandingsRow[]>(`/api/leagues/${id}/standings`),
     transactions: (id: string, limit = 25) => request<Transaction[]>(`/api/leagues/${id}/transactions${qs({ limit })}`),
+    trades: (id: string) => request<Transaction[]>(`/api/leagues/${id}/trades`),
     needs: (id: string) => request<RosterNeeds>(`/api/leagues/${id}/needs`),
     recommendations: (id: string) => request<Recommendation[]>(`/api/leagues/${id}/recommendations`),
     briefing: (id: string) => request<WeeklyBriefing>(`/api/leagues/${id}/briefing`),
@@ -155,6 +162,11 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ week, starter_player_ids: starterPlayerIds }),
       }),
+    addPlayer: (id: string, playerId: string) =>
+      request<LineupUpdate>(`/api/leagues/${id}/roster/add`, {
+        method: "POST",
+        body: JSON.stringify({ player_id: playerId }),
+      }),
     movePlayer: (
       id: string,
       body: { week: number; player_id: string; destination: "starter" | "bench" | "ir"; slot_index?: number },
@@ -163,9 +175,18 @@ export const api = {
 
   ai: {
     analyze: (leagueId: string) => request<TeamAnalysisResponse>(`/api/leagues/${leagueId}/ai/analyze`, { method: "POST" }),
-    chat: (leagueId: string, messages: ChatMessage[]) =>
-      request<ChatResponse>(`/api/leagues/${leagueId}/ai/chat`, { method: "POST", body: JSON.stringify({ messages }) }),
+    waivers: (leagueId: string) => request<WaiverSuggestions>(`/api/leagues/${leagueId}/ai/waivers`, { method: "POST" }),
+    chat: (leagueId: string, messages: ChatMessage[], autoApprove = false) =>
+      request<ChatResponse>(`/api/leagues/${leagueId}/ai/chat`, {
+        method: "POST",
+        body: JSON.stringify({ messages, auto_approve: autoApprove }),
+      }),
     trade: (leagueId: string, body: { give: string[]; receive: string[] }) =>
       request<TradeAnalysisResponse>(`/api/leagues/${leagueId}/ai/trade`, { method: "POST", body: JSON.stringify(body) }),
+    reviewTrade: (leagueId: string, transactionId: string) =>
+      request<TradeReview>(`/api/leagues/${leagueId}/ai/trade/review`, {
+        method: "POST",
+        body: JSON.stringify({ transaction_id: transactionId }),
+      }),
   },
 };

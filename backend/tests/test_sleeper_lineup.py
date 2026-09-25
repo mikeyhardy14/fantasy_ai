@@ -55,6 +55,25 @@ def install_graphql(router, mode: dict):
                     }
                 },
             )
+        if "league_create_roster_transaction" in query:
+            variables = body["variables"]
+            seen["add"] = variables["adds"]
+            assert variables["league_id"] == fx.LEAGUE_ID
+            assert variables["roster_id"] == 1
+            assert variables["leg"] == 4
+            added = variables["adds"][0]["player_id"]
+            return Response(
+                200,
+                json={
+                    "data": {
+                        "league_create_roster_transaction": {
+                            "transaction_id": "tx-add",
+                            "status": "complete",
+                            "adds": [{"player_id": added, "roster_id": 1}],
+                        }
+                    }
+                },
+            )
         if "matchup_legs" in query:
             if mode.get("fail_read"):
                 return Response(200, json={"errors": [{"message": "temporarily unavailable"}]})
@@ -331,13 +350,38 @@ async def test_move_starter_to_bench_only_updates_the_scoring_lineup(client, aut
     assert _player(again, "3003")["group"] == "bench"
 
 
-async def test_move_between_bench_and_ir(client, auth_headers, sleeper_mock):
+async def _mark_out(session, sleeper_id: str) -> None:
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from app.models import League, Player
+
+    players = await session.execute(select(Player).options(selectinload(Player.external_ids)))
+    for player in players.scalars():
+        if player.external_id_for("sleeper") == sleeper_id:
+            player.injury_status = "Out"
+    leagues = await session.execute(select(League))
+    for league in leagues.scalars():
+        league.roster_settings = {**league.roster_settings, "reserve_allow_out": True}
+    await session.commit()
+
+
+async def test_move_between_bench_and_ir(client, auth_headers, sleeper_mock, session):
     seen = install_graphql(sleeper_mock, {})
     league = await _import(client, auth_headers)
     await _save_token(client, auth_headers)
+    await _mark_out(session, "2003")
     team, _, _ = await _lineup(client, auth_headers, league["id"])
     injured = _player(team, "2004")
     before = len(seen["queries"])
+
+    healthy = await client.post(
+        f"/api/leagues/{league['id']}/lineup/move",
+        json={"week": 4, "player_id": _player(team, "3003")["id"], "destination": "ir"},
+        headers=auth_headers,
+    )
+    assert healthy.status_code == 422
+    assert "not eligible" in healthy.json()["error"]["message"]
 
     full = await client.post(
         f"/api/leagues/{league['id']}/lineup/move",
@@ -370,10 +414,11 @@ async def test_move_between_bench_and_ir(client, auth_headers, sleeper_mock):
     assert _player(parked, "2003")["group"] == "reserve"
 
 
-async def test_move_starter_to_ir_benches_before_reserve(client, auth_headers, sleeper_mock):
+async def test_move_starter_to_ir_benches_before_reserve(client, auth_headers, sleeper_mock, session):
     seen = install_graphql(sleeper_mock, {})
     league = await _import(client, auth_headers)
     await _save_token(client, auth_headers)
+    await _mark_out(session, "2001")
     team, _, _ = await _lineup(client, auth_headers, league["id"])
     await client.post(
         f"/api/leagues/{league['id']}/lineup/move",
@@ -414,3 +459,54 @@ async def test_move_rejects_an_ineligible_slot_without_writing(client, auth_head
     assert resp.status_code == 422
     assert "not eligible" in resp.json()["error"]["message"]
     assert len(seen["queries"]) == before
+
+
+async def test_add_puts_an_unowned_player_on_the_bench(client, auth_headers, sleeper_mock, session):
+    from uuid import UUID
+
+    from sqlalchemy import delete
+
+    from app.models import RosterEntry
+
+    seen = install_graphql(sleeper_mock, {})
+    league = await _import(client, auth_headers)
+    await _save_token(client, auth_headers)
+    team, _, _ = await _lineup(client, auth_headers, league["id"])
+    found = await client.get(
+        f"/api/leagues/{league['id']}/players",
+        params={"search": "Free", "available": True},
+        headers=auth_headers,
+    )
+    assert found.status_code == 200, found.text
+    free = next(player for player in found.json() if player["name"] == "Free Agent")
+    full = await client.post(
+        f"/api/leagues/{league['id']}/roster/add",
+        json={"player_id": free["id"]},
+        headers=auth_headers,
+    )
+    assert full.status_code == 422
+    assert "full" in full.json()["error"]["message"]
+    assert "add" not in seen
+
+    await session.execute(delete(RosterEntry).where(RosterEntry.player_id == UUID(_player(team, "3004")["id"])))
+    await session.commit()
+    added = await client.post(
+        f"/api/leagues/{league['id']}/roster/add",
+        json={"player_id": free["id"]},
+        headers=auth_headers,
+    )
+    assert added.status_code == 200, added.text
+    body = added.json()
+    assert "Free Agent is on your bench." in body["message"]
+    assert body["verified"] is True
+    assert seen["add"] == [{"player_id": "6001", "roster_id": 1}]
+    assert any(slot["player"] and slot["player"]["name"] == "Free Agent" for slot in body["team"]["bench"])
+
+    team, _, _ = await _lineup(client, auth_headers, league["id"])
+    owned = await client.post(
+        f"/api/leagues/{league['id']}/roster/add",
+        json={"player_id": _player(team, "1001")["id"]},
+        headers=auth_headers,
+    )
+    assert owned.status_code == 422
+    assert "already has" in owned.json()["error"]["message"]

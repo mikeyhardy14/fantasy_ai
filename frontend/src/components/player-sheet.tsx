@@ -89,12 +89,12 @@ export function PlayerSheetDialog({
   const matchup = player ? opponentLabel(player, week) : null;
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
-      <button type="button" className="absolute inset-0 bg-[#1c1916]/40" aria-label="Close player" onClick={onClose} />
+      <button type="button" className="veil-enter absolute inset-0 bg-[#1c1916]/40" aria-label="Close player" onClick={onClose} />
       <div
         role="dialog"
         aria-modal="true"
         aria-label={player?.name ?? "Player"}
-        className="relative z-10 max-h-[85vh] w-full max-w-4xl overflow-y-auto border border-surface-border bg-surface-raised p-5 sm:p-6"
+        className="sheet-enter relative z-10 max-h-[85vh] w-full max-w-4xl overflow-y-auto border border-surface-border bg-surface-raised p-5 shadow-card sm:p-6"
       >
         {loading ? <p className="text-sm text-slate-500">Loading…</p> : null}
         {error ? <p className="text-sm text-red-300">{error}</p> : null}
@@ -110,6 +110,7 @@ export function PlayerSheetDialog({
                 <p className="mt-1 text-xs text-slate-500">
                   {player.nfl_team ?? "FA"}
                   {matchup ? ` · ${matchup}` : ""}
+                  {player.season_points != null ? ` · ${formatPoints(player.season_points)} total` : ""}
                   {player.projected_points != null ? ` · Proj ${formatPoints(player.projected_points)}` : ""}
                 </p>
               </div>

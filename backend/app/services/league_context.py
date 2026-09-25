@@ -5,10 +5,13 @@ Combines the normalized DB (fantasy platform data) with the NFLDataProvider
 produced here.
 """
 
+import asyncio
+import random
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.trade_review import pick_lines
 from app.core.errors import NotFoundError
 from app.core.logging import get_logger
 from app.domain.enums import NON_LINEUP_SLOTS
@@ -16,13 +19,21 @@ from app.intelligence.context import TeamContext
 from app.intelligence.lineup import lineup_issues, player_flags
 from app.intelligence.roster_needs import compute_roster_needs
 from app.models import FantasyTeam, League, Player, RosterEntry, Transaction
-from app.nfl_data import NFLDataProvider, player_key
+from app.nfl_data import NFLDataProvider, PlayerProjection, player_key
 from app.nfl_data.headshot import headshot_url
 from app.nfl_data.live import depth_for_player
 from app.nfl_data.props import EspnPropClient, prop_components
 from app.nfl_data.rankings import RankCandidate, build_rankings, ruled_out
-from app.nfl_data.sleeper_stats import SleeperWeeklyStats
+from app.nfl_data.sleeper_stats import (
+    SleeperProjections,
+    SleeperWeeklyStats,
+    projection_points,
+    score_stats,
+    summarize_stats,
+)
+from app.nfl_data.usage import UsageTable, build_usage
 from app.nfl_data.vegas import explain_projection, normalize_position
+from app.nfl_data.vegas_ff import project_player, scoring_from_league, sims_for, start_sit
 from app.repositories import (
     MatchupRepository,
     PlayerRepository,
@@ -31,11 +42,11 @@ from app.repositories import (
     TransactionRepository,
 )
 from app.schemas.league import (
-    fantasy_account_out,
     LeagueDetailOut,
     LeagueOut,
     MatchupOut,
     MatchupSideOut,
+    NflGameOut,
     PlayerOut,
     PlayerSheetOut,
     PropLineOut,
@@ -43,10 +54,12 @@ from app.schemas.league import (
     RankingsOut,
     RosterNeedsOut,
     RosterSlotOut,
+    SlotCallOut,
     StandingsRowOut,
     TeamOut,
     TeamSummaryOut,
     TransactionOut,
+    fantasy_account_out,
 )
 
 log = get_logger(__name__)
@@ -59,16 +72,19 @@ class LeagueContextService:
         nfl_data: NFLDataProvider,
         weekly_stats: SleeperWeeklyStats | None = None,
         props: EspnPropClient | None = None,
+        sleeper_projections: SleeperProjections | None = None,
     ):
         self.session = session
         self.nfl_data = nfl_data
         self.weekly_stats = weekly_stats
         self.props = props
+        self.sleeper_projections = sleeper_projections
         self.teams = TeamRepository(session)
         self.players = PlayerRepository(session)
         self.rosters = RosterRepository(session)
         self.matchups = MatchupRepository(session)
         self.transactions = TransactionRepository(session)
+        self._usage_cache: dict[tuple[int, int], UsageTable] = {}
 
     # ---- league ---------------------------------------------------------------
 
@@ -109,11 +125,14 @@ class LeagueContextService:
     # ---- players -------------------------------------------------------------
 
     async def _week_projection(self, player: Player, league: League, week: int, on_bye: bool):
-        """Saved number, then DraftKings props. Defenses still use the opponent's implied total."""
+        """Saved number, then the Vegas share model, then props, then Sleeper's published total."""
         key = player_key(player.name, player.position, player.nfl_team)
         projection = await self.nfl_data.get_projection(key, league.season, week)
         if projection is not None or on_bye:
             return projection
+        modeled = await self._modeled_projection(player, league, week)
+        if modeled is not None:
+            return modeled
         if self.props is not None:
             projection = await self.props.project_named(
                 player.name,
@@ -125,7 +144,7 @@ class LeagueContextService:
             if projection is not None:
                 return projection
         if normalize_position(player.position) == "DEF" and player.nfl_team:
-            return await self.nfl_data.project_from_line(
+            from_line = await self.nfl_data.project_from_line(
                 nfl_team=player.nfl_team,
                 position=player.position,
                 depth=depth_for_player(player.extra),
@@ -133,7 +152,82 @@ class LeagueContextService:
                 week=week,
                 scoring=league.scoring_settings or {},
             )
-        return None
+            if from_line is not None:
+                return from_line
+        return await self._sleeper_projection(player, league, week)
+
+    async def _sleeper_projection(self, player: Player, league: League, week: int) -> PlayerProjection | None:
+        if self.sleeper_projections is None:
+            return None
+        sleeper_id = player.external_id_for(league.provider)
+        if not sleeper_id:
+            return None
+        stats = await self.sleeper_projections.player(league.season, week, sleeper_id)
+        points, label = projection_points(stats, league.scoring_settings)
+        if points is None:
+            return None
+        return PlayerProjection(
+            week=week,
+            points=points,
+            source="sleeper",
+            note=f"{label} projection for this week.",
+        )
+
+    async def _usage_table(self, league: League, week: int) -> UsageTable:
+        key = (league.season, week)
+        cached = self._usage_cache.get(key)
+        if cached is not None:
+            return cached
+        stats = self.weekly_stats
+        if stats is None or week <= 1:
+            return UsageTable()
+        blobs = await asyncio.gather(*(stats.week(league.season, past) for past in range(1, week)))
+        roster = await self.players.list_active(league.provider, ("QB", "RB", "WR", "TE"))
+        teams: dict[str, str] = {}
+        injuries: dict[str, str | None] = {}
+        positions: dict[str, str | None] = {}
+        for person in roster:
+            sleeper_id = person.external_id_for(league.provider)
+            if not sleeper_id or not person.nfl_team:
+                continue
+            teams[sleeper_id] = person.nfl_team
+            injuries[sleeper_id] = person.injury_status
+            positions[sleeper_id] = person.position
+        table = build_usage(list(zip(range(1, week), blobs, strict=True)), teams, injuries, positions)
+        self._usage_cache[key] = table
+        return table
+
+    async def _modeled_projection(self, player: Player, league: League, week: int):
+        """Share of the Vegas team total from this season's earlier games. None without that history."""
+        if self.weekly_stats is None or week <= 1 or not player.nfl_team:
+            return None
+        position = normalize_position(player.position)
+        if position not in {"QB", "RB", "WR", "TE"}:
+            return None
+        sleeper_id = player.external_id_for(league.provider)
+        if not sleeper_id:
+            return None
+        schedule = await self.nfl_data.get_schedule(player.nfl_team, league.season)
+        game = next((item for item in schedule if item.week == week and item.opponent), None)
+        if game is None or game.total is None or game.spread is None:
+            return None
+        implied = game.implied_points if game.implied_points is not None else (game.total - game.spread) / 2
+        table = await self._usage_table(league, week)
+        games = table.games.get(sleeper_id) or []
+        if not games:
+            return None
+        status = (player.injury_status or "").strip().lower()
+        return project_player(
+            position=position,
+            week=week,
+            implied=implied,
+            margin=-game.spread,
+            team_history=table.team_history.get(player.nfl_team) or {},
+            player_games=games,
+            scoring=scoring_from_league(league.scoring_settings or {}),
+            teammates_out_share=table.out_share(player.nfl_team, sleeper_id),
+            questionable=status in {"questionable", "q"},
+        )
 
     async def player_out(self, player: Player, league: League, week: int) -> PlayerOut:
         key = player_key(player.name, player.position, player.nfl_team)
@@ -144,7 +238,22 @@ class LeagueContextService:
             opponent = None
         projection = await self._week_projection(player, league, week, on_bye)
         stats = await self.nfl_data.get_season_stats(key, league.season)
+        season_points = stats.fantasy_points if stats else None
+        per_game = stats.fantasy_points_per_game if stats else None
+        if season_points is None:
+            scored, games = await self._points_scored(player, league, await self._season_week_blobs(league, week))
+            if scored is not None:
+                season_points = scored
+                if per_game is None and games:
+                    per_game = round(scored / games, 1)
         schedule = await self.nfl_data.get_schedule(player.nfl_team, league.season) if player.nfl_team else []
+        live_game = getattr(self.nfl_data, "live_schedule_game", None)
+        if player.nfl_team and live_game is not None:
+            fresh = await live_game(player.nfl_team, league.season, week)
+            if fresh is not None:
+                schedule = [fresh if item.week == week else item for item in schedule]
+                if not any(item.week == week for item in schedule):
+                    schedule = [*schedule, fresh]
         return PlayerOut(
             id=player.id,
             name=player.name,
@@ -161,6 +270,7 @@ class LeagueContextService:
             opponent=opponent,
             projected_points=projection.points if projection else None,
             projection_note=projection.note if projection else None,
+            projection_detail=_sim_detail(projection),
             projection_reasons=explain_projection(
                 projection,
                 on_bye=on_bye,
@@ -171,8 +281,8 @@ class LeagueContextService:
             projection_lines=[
                 PropLineOut(**row) for row in prop_components(projection.detail if projection else None)
             ],
-            season_points=stats.fantasy_points if stats else None,
-            points_per_game=stats.fantasy_points_per_game if stats else None,
+            season_points=season_points,
+            points_per_game=per_game,
             headshot_url=headshot_url(player),
             schedule=schedule,
             external_ids={e.provider: e.external_id for e in player.external_ids},
@@ -221,13 +331,26 @@ class LeagueContextService:
     ) -> list[PlayerOut]:
         week = week or league.current_week
         rostered = await self.players.rostered_player_ids(league.id, week)
+        # A name search is a small match list. Browsing, including one position,
+        # has to rank by this week's projection before the response is cut off.
+        query = (search or "").strip() or None
+        fetch_limit = limit if query else max(limit, 2000)
         players = await self.players.search(
             provider=league.provider,
             exclude_ids=rostered,
             position=position,
-            query=search,
-            limit=limit,
+            query=query,
+            limit=fetch_limit,
         )
+        if query is None:
+            ranked: list[tuple[float | None, Player]] = []
+            for player in players:
+                bye = await self.nfl_data.get_bye_week(player.nfl_team, league.season) if player.nfl_team else None
+                on_bye = bye == week if bye is not None else False
+                projection = await self._week_projection(player, league, week, on_bye)
+                ranked.append((None if projection is None else projection.points, player))
+            ranked.sort(key=lambda row: (row[0] is None, -(row[0] or 0), row[1].name))
+            players = [player for _, player in ranked[:limit]]
         out = [await self.player_out(p, league, week) for p in players]
         out.sort(
             key=lambda p: (
@@ -240,18 +363,89 @@ class LeagueContextService:
         )
         return out
 
+    async def _season_week_blobs(self, league: League, week: int) -> list[dict]:
+        if self.weekly_stats is None or week < 1:
+            return []
+        return list(await asyncio.gather(*(self.weekly_stats.week(league.season, item) for item in range(1, week + 1))))
+
+    async def _points_scored(self, player: Player, league: League, blobs: list[dict]) -> tuple[float | None, int | None]:
+        """Season fantasy points already scored, then games with a stat line."""
+        key = player.external_id_for(league.provider) or str(player.id)
+        stats = await self.nfl_data.get_season_stats(key, league.season)
+        if stats is not None and stats.fantasy_points is not None:
+            return float(stats.fantasy_points), stats.games_played
+        sleeper_id = player.external_id_for(league.provider)
+        if not sleeper_id or not blobs:
+            return None, None
+        total = 0.0
+        games = 0
+        scoring = league.scoring_settings or {}
+        for blob in blobs:
+            raw = blob.get(sleeper_id)
+            if not isinstance(raw, dict):
+                continue
+            points, _label = score_stats(raw, scoring)
+            if points is None:
+                continue
+            total += points
+            games += 1
+        if games == 0:
+            return None, None
+        return round(total, 1), games
+
     async def search_players(
         self, league: League, *, search: str | None, position: str | None, limit: int, week: int | None = None
     ) -> list[PlayerOut]:
         week = week or league.current_week
+        # Name search stays a small match list. Browsing "all players" has to
+        # rank the pool by points scored before the response limit.
+        pool = limit if search else max(limit, 2000)
         players = await self.players.search(
-            provider=league.provider, position=position, query=search, limit=limit
+            provider=league.provider, position=position, query=search, limit=pool
         )
-        return [await self.player_out(p, league, week) for p in players]
+        blobs = [] if search else await self._season_week_blobs(league, week)
+        scored: list[tuple[float | None, int | None, Player]] = [
+            (*await self._points_scored(player, league, blobs), player) for player in players
+        ]
+        scored.sort(key=lambda item: (item[0] is None, -(item[0] or 0), item[2].name))
+        out: list[PlayerOut] = []
+        for points, games, player in scored[:limit]:
+            row = await self.player_out(player, league, week)
+            updates: dict = {}
+            if row.season_points is None and points is not None:
+                updates["season_points"] = points
+            if row.points_per_game is None and points is not None and games:
+                updates["points_per_game"] = round(points / games, 1)
+            if updates:
+                row = row.model_copy(update=updates)
+            out.append(row)
+        out.sort(key=lambda row: (row.season_points is None, -(row.season_points or 0), row.name))
+        return out
 
-    async def rankings(self, league: League, week: int | None = None, position: str | None = None) -> RankingsOut:
+    async def _ranking_scope(
+        self, league: League, week: int, scope: str | None
+    ) -> tuple[set[str] | None, set[str] | None]:
+        if scope == "mine":
+            team = await self.user_team(league)
+            entries = await self.rosters.list_for_team(team.id, week) if team else []
+            return {str(entry.player_id) for entry in entries}, None
+        if scope == "available":
+            entries = await self.rosters.list_for_league(league.id, week)
+            return None, {str(entry.player_id) for entry in entries}
+        return None, None
+
+    async def rankings(
+        self,
+        league: League,
+        week: int | None = None,
+        position: str | None = None,
+        query: str | None = None,
+        nfl_team: str | None = None,
+        scope: str | None = None,
+    ) -> RankingsOut:
         week = week or league.current_week
         raw = await self.players.list_active(league.provider, ("QB", "RB", "WR", "TE", "K", "DEF"))
+        scored_weeks = await self._season_week_blobs(league, week)
         schedules: dict[str, list] = {}
         byes: dict[str, int | None] = {}
         candidates: list[RankCandidate] = []
@@ -269,6 +463,7 @@ class LeagueContextService:
             on_bye = byes[team] == week
             game = next((item for item in schedules[team] if item.week == week), None)
             projection = await self._week_projection(player, league, week, on_bye)
+            scored, _games = await self._points_scored(player, league, scored_weeks)
             candidates.append(
                 RankCandidate(
                     player_id=str(player.id),
@@ -289,21 +484,33 @@ class LeagueContextService:
                     books=[] if on_bye or game is None else list(game.books),
                     projected_points=None if projection is None else projection.points,
                     projection_source=None if projection is None else projection.source,
+                    season_points=scored,
                 )
             )
-        rows, notes = build_rankings(
+        rostered = await self.rosters.list_for_league(league.id, week)
+        user = await self.user_team(league)
+        yours = {str(entry.player_id) for entry in rostered if user and entry.fantasy_team_id == user.id}
+        taken = {str(entry.player_id) for entry in rostered} - yours
+        only_ids, exclude_ids = await self._ranking_scope(league, week, scope)
+        rows, truncated = build_rankings(
             candidates,
             team_count=league.team_count,
             roster_positions=list(league.roster_positions),
             position=position,
+            query=query,
+            nfl_team=nfl_team,
+            only_ids=only_ids,
+            exclude_ids=exclude_ids,
         )
         return RankingsOut(
             week=week,
-            notes=notes,
+            notes=[],
+            truncated=truncated,
             rows=[
                 RankingRowOut(
                     rank=row.rank,
                     player_id=UUID(row.player.player_id),
+                    owned="you" if row.player.player_id in yours else "league" if row.player.player_id in taken else None,
                     name=row.player.name,
                     position=row.player.position,
                     nfl_team=row.player.nfl_team,
@@ -319,6 +526,7 @@ class LeagueContextService:
                     books=row.player.books,
                     projected_points=row.player.projected_points,
                     projection_source=row.player.projection_source,
+                    season_points=row.player.season_points,
                     vorp=row.vorp,
                 )
                 for row in rows
@@ -399,6 +607,12 @@ class LeagueContextService:
             )
         return await self.team_out(league, team, week)
 
+    async def team_by_id(self, league: League, team_id: UUID, week: int | None = None) -> TeamOut:
+        team = await self.teams.get(league.id, team_id)
+        if team is None:
+            raise NotFoundError("That team is not in this league.")
+        return await self.team_out(league, team, week)
+
     # ---- matchup ---------------------------------------------------------------
 
     async def matchup_out(self, league: League, team: FantasyTeam, week: int | None = None) -> MatchupOut | None:
@@ -430,7 +644,102 @@ class LeagueContextService:
             status = "final"
         else:
             status = "in_progress"
-        return MatchupOut(week=week, is_bye=opponent is None, user=user, opponent=opponent, status=status)
+        view = MatchupOut(
+            week=week,
+            is_bye=opponent is None,
+            user=user,
+            opponent=opponent,
+            status=status,
+            calls=_slot_calls(user, opponent),
+            games=await self._nfl_games(league.season, week),
+        )
+        await self.attach_live_stat_lines(league, view)
+        return view
+
+    async def attach_live_stat_lines(self, league: League, view: MatchupOut) -> None:
+        """Counting stats for starters whose NFL game is in progress this week."""
+        if self.weekly_stats is None or view.week != league.current_week:
+            return
+        if not any(game.state == "in" for game in view.games):
+            return
+        blob = await self.weekly_stats.week(league.season, view.week, max_age=30)
+        _apply_live_stat_lines(view, blob)
+
+    async def _nfl_games(self, season: int, week: int) -> list[NflGameOut]:
+        loader = getattr(self.nfl_data, "live_summaries", None)
+        if loader is None:
+            return []
+        try:
+            rows = await loader(season, week)
+        except Exception as exc:  # noqa: BLE001 - the matchup still loads if the scoreboard does not
+            log.warning("matchup.nfl_games_failed", error=str(exc))
+            return []
+        rank = {"in": 0, "pre": 1, "post": 2}
+        ordered = sorted(enumerate(rows), key=lambda item: (rank.get(item[1].state or "", 3), item[0]))
+        return [
+            NflGameOut(
+                away=game.away,
+                home=game.home,
+                away_score=game.away_score,
+                home_score=game.home_score,
+                state=game.state,
+                detail=game.detail,
+                summary=game.summary,
+                broadcast=game.broadcast,
+            )
+            for _, game in ordered
+        ]
+
+    async def apply_live_matchup_points(self, league: League, view: MatchupOut, raw_sides: list[dict]) -> None:
+        """Replace stored week points with the public Sleeper matchup that just came back."""
+        sides: dict[str, MatchupSideOut] = {}
+        user_team = await self.teams.get(league.id, view.user.team.id)
+        if user_team:
+            sides[user_team.external_team_id] = view.user
+        if view.opponent:
+            opponent_team = await self.teams.get(league.id, view.opponent.team.id)
+            if opponent_team:
+                sides[opponent_team.external_team_id] = view.opponent
+        external_ids: set[str] = set()
+        incoming: dict[str, dict] = {}
+        for raw in raw_sides:
+            roster_id = str(raw.get("roster_id"))
+            if roster_id not in sides:
+                continue
+            incoming[roster_id] = raw
+            external_ids.update(str(player_id) for player_id in (raw.get("players_points") or {}))
+        mapped = await self.players.map_external_ids(league.provider, external_ids)
+        for roster_id, raw in incoming.items():
+            side = sides[roster_id]
+            points_by_player: dict[str, float] = {}
+            for external_id, value in (raw.get("players_points") or {}).items():
+                player = mapped.get(str(external_id))
+                if player is None:
+                    continue
+                try:
+                    points_by_player[str(player.id)] = float(value)
+                except (TypeError, ValueError):
+                    continue
+            try:
+                side.points = float(raw.get("points") or 0)
+            except (TypeError, ValueError):
+                side.points = 0.0
+            for slot in side.starters:
+                if slot.player and str(slot.player.id) in points_by_player:
+                    slot.points = points_by_player[str(slot.player.id)]
+            row = await self.matchups.get_for_team(league.id, view.week, side.team.id)
+            if row is not None:
+                row.points = side.points
+                row.player_points = points_by_player
+        if view.opponent is None:
+            view.status = "bye"
+        elif view.user.points == 0 and view.opponent.points == 0:
+            view.status = "upcoming"
+        elif view.week < league.current_week:
+            view.status = "final"
+        else:
+            view.status = "in_progress"
+        await self.session.commit()
 
     # ---- standings / transactions ----------------------------------------------
 
@@ -447,6 +756,18 @@ class LeagueContextService:
         rows = await self.transactions.list_recent(league.id, limit)
         return [self._tx_out(t, team) for t in rows]
 
+    async def league_trades(self, league: League) -> list[TransactionOut]:
+        team = await self.user_team(league)
+        rows = await self.transactions.list_trades(league.id)
+        return [self._tx_out(t, team) for t in rows]
+
+    async def get_trade(self, league: League, transaction_id: UUID) -> TransactionOut:
+        team = await self.user_team(league)
+        row = await self.transactions.get(league.id, transaction_id)
+        if row is None or row.type != "trade":
+            raise NotFoundError("That trade is not in this league.")
+        return self._tx_out(row, team)
+
     @staticmethod
     def _tx_out(t: Transaction, user_team: FantasyTeam | None) -> TransactionOut:
         team_ids = set(t.details.get("team_ids", []))
@@ -461,6 +782,7 @@ class LeagueContextService:
             team_names=t.details.get("team_names", []),
             faab_bid=t.details.get("faab_bid"),
             involves_user=bool(user_team and str(user_team.id) in team_ids),
+            picks=pick_lines(t.details.get("draft_picks") or []),
         )
 
     # ---- roster needs & full context -----------------------------------------
@@ -506,3 +828,54 @@ class LeagueContextService:
             projections_available=any(p.projected_points is not None for p in roster_players),
             bye_weeks_available=any(p.bye_week is not None for p in roster_players),
         )
+
+
+def _sim_detail(projection) -> dict[str, float]:
+    if projection is None or projection.detail.get("vegas_ff") != 1:
+        return {}
+    return {key: float(value) for key, value in projection.detail.items()}
+
+
+def _apply_live_stat_lines(view: MatchupOut, blob: dict) -> None:
+    playing = {team for game in view.games if game.state == "in" for team in (game.away, game.home)}
+    if not playing:
+        return
+    sides = [view.user, view.opponent] if view.opponent else [view.user]
+    for side in sides:
+        for slot in side.starters:
+            player = slot.player
+            if player is None or not player.nfl_team or player.nfl_team not in playing:
+                continue
+            sleeper_id = player.external_ids.get("sleeper")
+            raw = blob.get(sleeper_id) if sleeper_id else None
+            if not isinstance(raw, dict):
+                continue
+            slot.stat_line = summarize_stats(raw) or None
+
+
+def _slot_calls(user: MatchupSideOut, opponent: MatchupSideOut | None) -> list[SlotCallOut]:
+    if opponent is None:
+        return []
+    by_index = {slot.slot_index: slot for slot in opponent.starters if slot.slot_index is not None}
+    rng = random.Random()
+    calls: list[SlotCallOut] = []
+    for slot in user.starters:
+        if slot.slot_index is None or slot.player is None:
+            continue
+        other = by_index.get(slot.slot_index)
+        if other is None or other.player is None:
+            continue
+        left = sims_for(slot.player.projection_detail, rng=rng)
+        right = sims_for(other.player.projection_detail, rng=rng)
+        if left is None or right is None:
+            continue
+        result = start_sit(left, right, slot.player.name, other.player.name)
+        calls.append(
+            SlotCallOut(
+                slot_index=slot.slot_index,
+                start_name=result["start"],
+                win_prob=result["win_prob"],
+                confidence=result["confidence"],
+            )
+        )
+    return calls

@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { Button } from "./button";
 
 export function Skeleton({ className }: { className?: string }) {
-  return <div className={cn("animate-pulse bg-surface-overlay", className)} aria-hidden data-testid="skeleton" />;
+  return <div className={cn("paper-skeleton", className)} aria-hidden data-testid="skeleton" />;
 }
 
 export function SkeletonRows({ rows = 5 }: { rows?: number }) {

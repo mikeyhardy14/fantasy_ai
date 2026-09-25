@@ -93,6 +93,34 @@ async def test_analyze_without_openai_returns_valid_structured_fallback(client, 
     assert body.recommendations
 
 
+async def test_waiver_suggestions_without_ai_use_roster_rules(client, auth_headers):
+    league_id = await seed_demo(client, auth_headers)
+    resp = await client.post(f"/api/leagues/{league_id}/ai/waivers", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["generated_by"] == "deterministic"
+    assert "Waiver suggestions" in body["message"]
+    assert "Weakest positions" in body["message"]
+
+
+async def test_waiver_suggestions_do_not_offer_lineup_writes(client, auth_headers, session, state: AppState):
+    from uuid import UUID
+
+    from app.schemas.ai import WaiverSuggestionsResponse
+
+    league_id = await seed_demo(client, auth_headers)
+    owner = await UserRepository(session).get_by_email("mike@example.com")
+    ctx = await build_tool_context(session, owner.id, UUID(league_id), LeagueContextService(session, state.nfl_data))
+    llm = FakeLLM([LLMResponse(content="Add Spare Tight at TE. No drop. Why: TE depth.")])
+    resp = await AIService(llm).suggest_waivers(ctx)
+    assert isinstance(resp, WaiverSuggestionsResponse)
+    assert resp.generated_by == "openai"
+    assert "Spare Tight" in resp.message
+    names = [spec["function"]["name"] for spec in llm.calls[0]["tools"]]
+    assert "get_available_players" in names
+    assert "change_lineup" not in names and "set_lineup" not in names
+
+
 async def test_chat_fallback_and_validation(client, auth_headers):
     league_id = await seed_demo(client, auth_headers)
     resp = await client.post(
@@ -114,6 +142,27 @@ async def test_trade_analysis_validates_ownership(client, auth_headers):
     assert ok.status_code == 200 and ok.json()["analysis"]["verdict"] in ("ACCEPT", "REJECT", "NEGOTIATE", "UNCLEAR")
     bad = await client.post(f"/api/leagues/{league_id}/ai/trade", json={"give": [theirs], "receive": [mine]}, headers=auth_headers)
     assert bad.status_code == 422
+
+
+async def test_other_team_roster_is_readable(client, auth_headers, session, state: AppState):
+    from uuid import UUID
+
+    league_id = await seed_demo(client, auth_headers)
+    standings = (await client.get(f"/api/leagues/{league_id}/standings", headers=auth_headers)).json()
+    other = next(row for row in standings if not row["is_user_team"])
+    resp = await client.get(f"/api/leagues/{league_id}/teams/{other['id']}", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["team"]["name"] == other["name"]
+    assert body["team"]["is_user_team"] is False
+    assert body["starters"]
+    missing = await client.get(f"/api/leagues/{league_id}/teams/00000000-0000-0000-0000-000000000000", headers=auth_headers)
+    assert missing.status_code == 404
+
+    owner = await UserRepository(session).get_by_email("mike@example.com")
+    ctx = await build_tool_context(session, owner.id, UUID(league_id), LeagueContextService(session, state.nfl_data))
+    roster = json.loads(await league_tool_registry.execute("get_team_roster", {"team_id": other["id"]}, ctx))
+    assert roster["team"] == other["name"] and roster["is_user"] is False and roster["starters"]
 
 
 async def test_tool_context_authorization(client, auth_headers, session, state: AppState):
@@ -279,7 +328,7 @@ def test_slot_labels_and_free_model_choice():
     assert index == 1 and error is None
 
     gemini = build_llm(Settings(gemini_api_key="test-gemini", openai_api_key="test-openai", groq_api_key="test-groq"))
-    assert gemini is not None and gemini.provider == "gemini" and gemini.model == "gemini-3.8-flash"
+    assert gemini is not None and gemini.provider == "gemini" and gemini.model == "gemini-3.5-flash-lite"
     assert "generativelanguage.googleapis.com" in str(gemini._client.base_url)
     groq = build_llm(Settings(gemini_api_key=None, groq_api_key="test-groq", openai_api_key="test-openai"))
     assert groq is not None and groq.provider == "groq"
@@ -343,6 +392,62 @@ async def test_lineup_tools_name_the_player_and_leave_the_write_to_the_service(c
         UUID(row["player_id"]) if row["player_id"] else None for row in roster["starters"]
     ]
     assert ctx.writes.lineups[0].week == ctx.league.current_week
+
+    ctx.writes.moves.clear()
+    ctx.pending_lineups.clear()
+    held = None
+    chosen = None
+    starter = None
+    slot_name = None
+    for index, starter_row in enumerate(roster["starters"]):
+        if not starter_row.get("player_id"):
+            continue
+        label = _numbered_slot(roster["lineup_slots"], index)
+        for bench_row in roster["bench"]:
+            if not bench_row.get("player_id"):
+                continue
+            attempt = json.loads(
+                await league_tool_registry.execute(
+                    "change_lineup",
+                    {"player_name": bench_row["name"], "destination": "starter", "slot": label},
+                    ctx,
+                )
+            )
+            if attempt.get("pending_approval"):
+                held, chosen, starter, slot_name = attempt, bench_row, starter_row, label
+                break
+            ctx.writes.moves.clear()
+            ctx.pending_lineups.clear()
+        if held:
+            break
+    assert held is not None and chosen is not None and starter is not None and slot_name is not None
+    assert held["verified"] is False
+    assert "was not changed" in held["message"]
+    assert "over" in held["summary"]
+    assert ctx.writes.moves == []
+    assert ctx.pending_lineups[0].player_name == chosen["name"]
+    assert ctx.pending_lineups[0].replaces == starter["name"]
+
+    ctx.auto_approve = True
+    ctx.pending_lineups.clear()
+    applied = json.loads(
+        await league_tool_registry.execute(
+            "change_lineup",
+            {"player_name": chosen["name"], "destination": "starter", "slot": slot_name},
+            ctx,
+        )
+    )
+    assert applied["verified"] is True
+    assert len(ctx.writes.moves) == 1
+    assert ctx.pending_lineups == []
+
+
+def _numbered_slot(slots: list[str], index: int) -> str:
+    name = slots[index]
+    same = [i for i, slot in enumerate(slots) if slot == name]
+    if len(same) == 1:
+        return name
+    return f"{name}{same.index(index) + 1}"
 
 
 def _lineup_reply(roster: dict):

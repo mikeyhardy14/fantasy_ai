@@ -45,7 +45,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       <div className="flex min-h-screen flex-col lg:flex-row">
         <Sidebar />
         <main className="flex-1 min-w-0">
-          <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-10 lg:py-10">{children}</div>
+          <div className="page-enter mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-10 lg:py-10">{children}</div>
         </main>
       </div>
       </PlayerSheetProvider>

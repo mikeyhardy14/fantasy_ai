@@ -1,4 +1,5 @@
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -83,6 +84,24 @@ class ChatMessageIn(BaseModel):
 class ChatRequest(BaseModel):
     messages: list[ChatMessageIn] = Field(min_length=1, max_length=40)
     week: int | None = Field(default=None, ge=1, le=18)
+    auto_approve: bool = False
+
+
+class LineupAction(BaseModel):
+    """A lineup move the chat can run after the manager approves it."""
+
+    label: str
+    summary: str = ""
+    player_id: UUID
+    player_name: str
+    position: str | None = None
+    headshot_url: str | None = None
+    destination: Literal["starter"] = "starter"
+    slot_index: int
+    slot: str
+    week: int
+    replaces: str | None = None
+    detail: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -90,6 +109,7 @@ class ChatResponse(BaseModel):
     tools_used: list[str] = Field(default_factory=list)
     generated_by: GeneratedBy
     suggested_questions: list[str] = Field(default_factory=list)
+    actions: list[LineupAction] = Field(default_factory=list)
 
 
 # ---- Trade -------------------------------------------------------------------
@@ -124,6 +144,22 @@ class TradeAnalysisResponse(BaseModel):
     generated_by: GeneratedBy
 
 
+class TradeReviewRequest(BaseModel):
+    transaction_id: UUID
+
+
+class TradeReviewResponse(BaseModel):
+    transaction_id: UUID
+    week: int | None
+    status: str
+    teams: list[str]
+    involves_user: bool
+    perspective: str
+    picks: list[str] = Field(default_factory=list)
+    analysis: TradeAnalysis
+    generated_by: GeneratedBy
+
+
 # ---- Weekly briefing --------------------------------------------------------
 
 
@@ -152,3 +188,10 @@ class WeeklyBriefing(BaseModel):
     roster_assessment: list[PositionAssessment]
     narrative: str | None = None
     generated_by: GeneratedBy
+
+
+class WaiverSuggestionsResponse(BaseModel):
+    message: str
+    generated_by: GeneratedBy
+    model: str | None = None
+    tools_used: list[str] = Field(default_factory=list)

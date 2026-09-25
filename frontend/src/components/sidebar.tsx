@@ -7,6 +7,7 @@ import { LogOut, Menu, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+import { Brand } from "./brand";
 import { StatusDot } from "./ui/badge";
 import { Select } from "./ui/input";
 
@@ -15,8 +16,8 @@ export const NAV = [
   { href: "/multibox", label: "Multi-Box" },
   { href: "/team", label: "My Team" },
   { href: "/matchup", label: "Matchup" },
+  { href: "/teams", label: "Teams" },
   { href: "/players", label: "Players" },
-  { href: "/rankings", label: "Rankings" },
   { href: "/waivers", label: "Waivers" },
   { href: "/trades", label: "Trades" },
   { href: "/assistant", label: "Assistant" },
@@ -39,8 +40,8 @@ export function Sidebar() {
             href={href}
             onClick={() => setOpen(false)}
             className={cn(
-              "block border-l-2 px-3 py-1.5 text-sm transition",
-              active ? "border-brand font-medium text-slate-100" : "border-transparent text-slate-400 hover:text-slate-100",
+              "block border-l-2 px-3 py-1.5 text-sm transition-colors",
+              active ? "border-amber-400 bg-brand-soft font-medium text-slate-100" : "border-transparent text-slate-400 hover:bg-surface-overlay hover:text-slate-100",
             )}
             aria-current={active ? "page" : undefined}
           >
@@ -84,8 +85,8 @@ export function Sidebar() {
   const content = (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between px-5 py-5">
-        <Link href="/dashboard" className="text-slate-100">
-          <span className="font-serif text-2xl leading-none">Fantasy</span>
+        <Link href="/dashboard" className="text-slate-100" aria-label="OMAHA">
+          <Brand />
         </Link>
         <button className="rounded-md p-1 text-slate-400 hover:text-slate-100 lg:hidden" onClick={() => setOpen(false)} aria-label="Close menu">
           <X className="h-5 w-5" />
@@ -113,13 +114,19 @@ export function Sidebar() {
         <button onClick={() => setOpen(true)} className="rounded-md p-1 text-slate-300" aria-label="Open menu">
           <Menu className="h-5 w-5" />
         </button>
-        <span className="font-serif text-lg text-slate-100">{selected?.name ?? "Fantasy"}</span>
+        <span className="font-serif text-lg text-slate-100">{selected?.name ?? "OMAHA"}</span>
         <span className="w-7" />
       </header>
-      {open ? <div className="fixed inset-0 z-40 bg-[#1c1916]/40 lg:hidden" onClick={() => setOpen(false)} /> : null}
+      <div
+        className={cn(
+          "fixed inset-0 z-40 bg-[#1c1916]/40 transition-opacity duration-300 lg:hidden",
+          open ? "opacity-100" : "pointer-events-none opacity-0",
+        )}
+        onClick={() => setOpen(false)}
+      />
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 w-64 border-r border-surface-border bg-surface-raised transition-transform lg:static lg:translate-x-0",
+          "fixed inset-y-0 left-0 z-50 w-64 border-r border-surface-border bg-surface-raised shadow-card transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] lg:static lg:translate-x-0 lg:shadow-none",
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >

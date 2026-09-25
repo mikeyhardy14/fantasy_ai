@@ -42,6 +42,8 @@ class ToolContext:
         self.service = service
         self.week = week or league.current_week
         self.writes = writes
+        self.auto_approve = False
+        self.pending_lineups: list = []
         self._team_ctx: TeamContext | None = None
         self.tools_used: list[str] = []
 

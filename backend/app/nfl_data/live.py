@@ -12,8 +12,9 @@ from app.nfl_data.base import (
     PlayerSeasonStats,
     ScheduleGame,
 )
-from app.nfl_data.espn import ESPNScheduleClient, SeasonBoard
+from app.nfl_data.espn import ESPNScheduleClient, GameSummary, SeasonBoard
 from app.nfl_data.local_file import LocalFileNFLDataProvider
+from app.nfl_data.teams import app_team
 from app.nfl_data.vegas import depth_from_extra, project_from_line
 
 
@@ -53,6 +54,14 @@ class LiveNFLDataProvider(NFLDataProvider):
 
     async def get_schedule(self, nfl_team: str, season: int) -> list[ScheduleGame]:
         return (await self._board(season)).season(nfl_team)
+
+    async def live_summaries(self, season: int, week: int) -> list[GameSummary]:
+        return await self.espn.live_summaries(season, week)
+
+    async def live_schedule_game(self, nfl_team: str, season: int, week: int) -> ScheduleGame | None:
+        slate = await self.espn.live_week(season, week)
+        game = slate.get(app_team(nfl_team))
+        return game.as_schedule() if game else None
 
     async def project_from_line(
         self,

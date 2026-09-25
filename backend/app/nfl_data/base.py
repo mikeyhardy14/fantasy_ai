@@ -31,6 +31,8 @@ class ScheduleGame(BaseModel):
     win_probability: float | None = None
     book_count: int = 0
     books: list[str] = Field(default_factory=list)
+    starts_at: str | None = None
+    state: str | None = None  # pre, in, post
 
 
 class PlayerNews(BaseModel):

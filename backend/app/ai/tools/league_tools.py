@@ -11,6 +11,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.ai.approvals import start_over_action
 from app.ai.tools.base import EmptyArgs, ToolContext, ToolRegistry
 from app.core.errors import NotFoundError
 from app.intelligence.lineup import eligible_positions_for_slot, is_eligible
@@ -19,6 +20,26 @@ from app.nfl_data.props import norm_name
 from app.schemas.league import LineupUpdateRequest, PlayerOut, RosterMoveRequest, RosterSlotOut
 
 registry = ToolRegistry()
+
+
+def season_stats_for_player(saved, player: PlayerOut, season: int):
+    """Prefer a saved season line. Otherwise use the points already scored this season."""
+    from app.nfl_data.base import PlayerSeasonStats
+
+    if saved is not None and saved.fantasy_points is not None:
+        return saved
+    if player.season_points is None:
+        return saved
+    games = None
+    if player.points_per_game:
+        games = max(1, round(player.season_points / player.points_per_game))
+    return PlayerSeasonStats(
+        season=season,
+        games_played=games,
+        fantasy_points=player.season_points,
+        fantasy_points_per_game=player.points_per_game,
+        source="sleeper",
+    )
 
 
 def _player_brief(p: PlayerOut) -> dict[str, Any]:
@@ -74,7 +95,7 @@ class SlotArgs(BaseModel):
 class ChangeLineupArgs(BaseModel):
     player_name: str = Field(description="A player already on the user's roster, matched by name.")
     destination: Literal["starter", "bench", "ir"] = Field(
-        description="starter puts them in the scoring lineup, bench takes them out, ir moves them to injured reserve."
+        description="starter puts them in the scoring lineup, bench takes them out, ir moves them to injured reserve only when their designation is allowed."
     )
     slot: str | None = Field(
         default=None,
@@ -214,7 +235,11 @@ async def get_player_stats(ctx: ToolContext, args: PlayerIdArgs) -> dict[str, An
 
     p = await ctx.service.get_player_in_league(ctx.league, _uuid(args.player_id), ctx.week)
     key = player_key(p.name, p.position, p.nfl_team)
-    stats = await ctx.service.nfl_data.get_season_stats(key, ctx.league.season)
+    stats = season_stats_for_player(
+        await ctx.service.nfl_data.get_season_stats(key, ctx.league.season),
+        p,
+        ctx.league.season,
+    )
     proj = await ctx.service.nfl_data.get_projection(key, ctx.league.season, ctx.week)
     news = await ctx.service.nfl_data.get_news(key)
     projection = proj.model_dump() if proj else None
@@ -316,14 +341,53 @@ async def get_roster_needs(ctx: ToolContext, _: EmptyArgs) -> dict[str, Any]:
     return tc.needs.model_dump(mode="json")
 
 
-@registry.tool("get_standings", "League standings with records and points.")
+@registry.tool("get_standings", "League standings with records, points, and each team's id.")
 async def get_standings(ctx: ToolContext, _: EmptyArgs) -> dict[str, Any]:
     tc = await ctx.team_context()
     return {
         "standings": [
-            {"rank": r.rank, "team": r.name, "record": r.record, "points_for": r.points_for, "is_user": r.is_user_team}
+            {
+                "rank": r.rank,
+                "team_id": str(r.id),
+                "team": r.name,
+                "record": r.record,
+                "points_for": r.points_for,
+                "is_user": r.is_user_team,
+            }
             for r in tc.standings
         ]
+    }
+
+
+class TeamIdArgs(BaseModel):
+    team_id: str = Field(description="Internal team id from get_standings")
+
+
+@registry.tool(
+    "get_team_roster",
+    "Starters, bench, and IR for any team in this league. Pass a team_id from get_standings. Read only.",
+    TeamIdArgs,
+)
+async def get_team_roster(ctx: ToolContext, args: TeamIdArgs) -> dict[str, Any]:
+    try:
+        team_id = UUID(args.team_id)
+    except ValueError:
+        return {"error": "team_id must be the id from get_standings."}
+    team = await ctx.service.teams.get(ctx.league.id, team_id)
+    if team is None:
+        return {"error": "That team is not in this league."}
+    view = await ctx.service.team_out(ctx.league, team, ctx.week)
+    return {
+        "team_id": str(view.team.id),
+        "team": view.team.name,
+        "owner": view.team.owner_name,
+        "record": view.team.record,
+        "is_user": view.team.is_user_team,
+        "week": view.week,
+        "projected_points": view.projected_points,
+        "starters": [_slot_brief(slot) for slot in view.starters],
+        "bench": [_slot_brief(slot) for slot in view.bench],
+        "reserve": [_slot_brief(slot) for slot in view.reserve],
     }
 
 
@@ -421,7 +485,8 @@ def _current_week(ctx: ToolContext) -> None:
 @registry.tool(
     "change_lineup",
     "Move one rostered player to a starting slot, the bench, or IR for the current week. "
-    "Writes the Sleeper scoring lineup and confirms it. Call only when the user asked to change the lineup. "
+    "Bench and IR write immediately. Starting a player over someone already in that slot waits for approval "
+    "and returns pending_approval unless auto-approval is on. Call only when the user asked to change the lineup. "
     "Demo leagues are read-only. Taxi moves are not supported.",
     ChangeLineupArgs,
 )
@@ -438,6 +503,17 @@ async def change_lineup(ctx: ToolContext, args: ChangeLineupArgs) -> dict[str, A
         slot_index_value, slot_error = slot_index(tc.lineup_slots, args.slot)
         if slot_error:
             return {"error": slot_error}
+        if not ctx.auto_approve and slot_index_value is not None:
+            proposal = start_over_action(tc.team, ctx.league.current_week, row, slot_index_value)
+            if proposal is not None:
+                ctx.pending_lineups.append(proposal)
+                return {
+                    "pending_approval": True,
+                    "verified": False,
+                    "public_api_confirmed": False,
+                    "summary": proposal.summary,
+                    "message": "Waiting for approval. The lineup was not changed.",
+                }
     body = RosterMoveRequest(
         week=ctx.league.current_week,
         player_id=row.player.id,

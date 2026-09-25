@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -13,6 +15,8 @@ from app.core.errors import AIUnavailable, ServiceUnavailableError
 from app.core.logging import get_logger
 
 log = get_logger(__name__)
+
+_RETRY_AFTER = re.compile(r"retry in ([0-9]+(?:\.[0-9]+)?)s", re.IGNORECASE)
 
 
 @dataclass
@@ -82,7 +86,7 @@ class OpenAIClient:
         base_url: str | None = None,
         provider: str = "openai",
     ):
-        kwargs: dict[str, Any] = {"api_key": api_key, "timeout": timeout}
+        kwargs: dict[str, Any] = {"api_key": api_key, "timeout": timeout, "max_retries": 0}
         if base_url:
             kwargs["base_url"] = base_url
         self._client = AsyncOpenAI(**kwargs)
@@ -111,17 +115,31 @@ class OpenAIClient:
                     "strict": True,
                 },
             }
-        try:
-            completion = await self._client.chat.completions.create(**kwargs)
-        except RateLimitError as exc:
-            raise ServiceUnavailableError("The AI service is rate limited. Try again shortly.") from exc
-        except APIConnectionError as exc:
-            raise ServiceUnavailableError("Could not reach the AI service.") from exc
-        except APIStatusError as exc:
-            log.warning("llm.status_error", provider=self.provider, status=exc.status_code, message=str(exc))
-            if exc.status_code in (401, 403):
-                raise AIUnavailable(f"The {self.provider} API key is invalid.") from exc
-            raise ServiceUnavailableError("The AI service returned an error.") from exc
+        completion = None
+        for attempt in range(3):
+            try:
+                completion = await self._client.chat.completions.create(**kwargs)
+                break
+            except RateLimitError as exc:
+                delay = _retry_seconds(exc)
+                if attempt >= 2 or delay is None or delay > 25:
+                    log.warning("llm.rate_limited", provider=self.provider, retry_in=delay)
+                    raise ServiceUnavailableError("The AI service is rate limited. Try again shortly.") from exc
+                log.info("llm.rate_limit_wait", provider=self.provider, retry_in=delay)
+                await asyncio.sleep(delay + 0.3)
+            except APIConnectionError as exc:
+                raise ServiceUnavailableError("Could not reach the AI service.") from exc
+            except APIStatusError as exc:
+                if exc.status_code == 503 and attempt < 2:
+                    log.warning("llm.busy", provider=self.provider, attempt=attempt)
+                    await asyncio.sleep(1.5 * (attempt + 1))
+                    continue
+                log.warning("llm.status_error", provider=self.provider, status=exc.status_code, message=str(exc))
+                if exc.status_code in (401, 403):
+                    raise AIUnavailable(f"The {self.provider} API key is invalid.") from exc
+                raise ServiceUnavailableError("The AI service returned an error.") from exc
+        if completion is None:
+            raise ServiceUnavailableError("The AI service returned an error.")
 
         choice = completion.choices[0]
         message = choice.message
@@ -140,6 +158,16 @@ class OpenAIClient:
         return LLMResponse(
             content=message.content, tool_calls=tool_calls, model=completion.model, raw_tool_calls=raw_calls
         )
+
+
+def _retry_seconds(exc: Exception) -> float | None:
+    match = _RETRY_AFTER.search(str(exc))
+    if match is None:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return None
 
 
 def echo_tool_call(tool_call: Any) -> dict[str, Any]:

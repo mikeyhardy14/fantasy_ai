@@ -11,10 +11,29 @@ class TransactionRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
+    async def get(self, league_id: UUID, transaction_id: UUID) -> Transaction | None:
+        result = await self.session.execute(
+            select(Transaction).where(Transaction.league_id == league_id, Transaction.id == transaction_id)
+        )
+        return result.scalar_one_or_none()
+
     async def list_recent(self, league_id: UUID, limit: int = 25) -> list[Transaction]:
         result = await self.session.execute(
             select(Transaction)
             .where(Transaction.league_id == league_id)
+            .order_by(Transaction.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def list_trades(self, league_id: UUID, limit: int = 30) -> list[Transaction]:
+        result = await self.session.execute(
+            select(Transaction)
+            .where(
+                Transaction.league_id == league_id,
+                Transaction.type == "trade",
+                Transaction.status.in_(("complete", "pending")),
+            )
             .order_by(Transaction.created_at.desc())
             .limit(limit)
         )

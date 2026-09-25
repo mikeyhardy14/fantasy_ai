@@ -4,6 +4,7 @@ import { useAuth } from "@/lib/auth";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { Brand } from "./brand";
 import { Button } from "./ui/button";
 import { Input, Label } from "./ui/input";
 import { InlineError } from "./ui/states";
@@ -35,7 +36,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[minmax(0,32rem)_1fr]">
       <div className="px-6 py-12 sm:px-12 sm:py-16">
-        <p className="font-serif text-2xl text-slate-100">Fantasy</p>
+        <Brand />
         <h1 className="mt-12 text-4xl text-slate-100">{mode === "login" ? "Sign in" : "Create an account"}</h1>
         <p className="mt-3 max-w-sm text-sm leading-relaxed text-slate-400">
           {mode === "login"
@@ -89,7 +90,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
           )}
         </p>
       </div>
-      <aside className="hidden border-l border-surface-border bg-surface-raised px-12 py-16 lg:block">
+      <aside className="page-enter hidden border-l border-surface-border bg-surface-raised px-12 py-16 lg:block">
         <p className="font-serif text-3xl text-slate-100">What you can do after signing in</p>
         <ol className="mt-8 max-w-sm space-y-5 text-sm leading-relaxed text-slate-300">
           <li>

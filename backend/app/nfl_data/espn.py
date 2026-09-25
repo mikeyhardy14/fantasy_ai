@@ -8,6 +8,7 @@ is not treated as a bye.
 import asyncio
 import json
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -35,6 +36,8 @@ class Game:
         win_probability: float | None = None,
         book_count: int = 0,
         books: list[str] | None = None,
+        starts_at: str | None = None,
+        state: str | None = None,
     ):
         self.week = week
         self.opponent = opponent
@@ -45,6 +48,8 @@ class Game:
         self.win_probability = win_probability
         self.book_count = book_count
         self.books = list(books or [])
+        self.starts_at = starts_at
+        self.state = state if state in {"pre", "in", "post"} else None
 
     def as_schedule(self) -> ScheduleGame:
         return ScheduleGame(
@@ -57,6 +62,8 @@ class Game:
             win_probability=self.win_probability,
             book_count=self.book_count,
             books=list(self.books),
+            starts_at=self.starts_at,
+            state=self.state,
         )
 
     def to_json(self) -> dict:
@@ -69,6 +76,8 @@ class Game:
             "win_probability": self.win_probability,
             "book_count": self.book_count,
             "books": self.books,
+            "starts_at": self.starts_at,
+            "state": self.state,
         }
 
     @classmethod
@@ -83,6 +92,8 @@ class Game:
             win_probability=raw.get("win_probability"),
             book_count=int(raw.get("book_count") or 0),
             books=list(raw.get("books") or []),
+            starts_at=raw.get("starts_at"),
+            state=raw.get("state"),
         )
 
 
@@ -125,6 +136,18 @@ class SeasonBoard:
             game = self.weeks[week].get(key) or Game(week, None, None, None, None, None)
             games.append(game.as_schedule())
         return games
+
+
+def _kickoff(event: dict, comp: dict) -> tuple[str | None, str | None]:
+    state = None
+    for node in (comp, event):
+        status = (node.get("status") or {}).get("type") or {}
+        candidate = status.get("state")
+        if candidate in {"pre", "in", "post"}:
+            state = candidate
+            break
+    starts = event.get("date") or comp.get("date") or comp.get("startDate")
+    return state, starts if isinstance(starts, str) else None
 
 
 def _moneyline(odds: dict, side: str) -> float | None:
@@ -190,6 +213,88 @@ def _number(value: object) -> float | None:
         return None
 
 
+@dataclass
+class GameSummary:
+    away: str
+    home: str
+    away_score: int | None
+    home_score: int | None
+    state: str | None
+    detail: str | None
+    summary: str | None
+    broadcast: str | None
+
+
+def _score(value: object) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(float(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _summary_text(state: str | None, situation: dict) -> str | None:
+    last = situation.get("lastPlay") if isinstance(situation.get("lastPlay"), dict) else {}
+    parts: list[str] = []
+    text = last.get("text") if isinstance(last, dict) else None
+    if isinstance(text, str) and text.strip():
+        parts.append(text.strip().rstrip("."))
+    drive = (last.get("drive") or {}).get("description") if isinstance(last, dict) else None
+    if state == "in" and isinstance(drive, str) and drive.strip():
+        parts.append(drive.strip())
+    down = situation.get("downDistanceText")
+    if state == "in" and isinstance(down, str) and down.strip():
+        parts.append(down.strip())
+    if not parts:
+        return None
+    return " · ".join(parts)
+
+
+def parse_game_summaries(payload: dict) -> list[GameSummary]:
+    """One scoreboard into a slate: score, clock, and the latest play."""
+    rows: list[GameSummary] = []
+    for event in payload.get("events") or []:
+        comp = (event.get("competitions") or [{}])[0]
+        home: tuple[str, int | None] | None = None
+        away: tuple[str, int | None] | None = None
+        for competitor in comp.get("competitors") or []:
+            abbr = app_team((competitor.get("team") or {}).get("abbreviation"))
+            side = competitor.get("homeAway")
+            if not abbr or side not in {"home", "away"}:
+                continue
+            pair = (abbr, _score(competitor.get("score")))
+            if side == "home":
+                home = pair
+            else:
+                away = pair
+        if home is None or away is None:
+            continue
+        state, _starts = _kickoff(event, comp)
+        status = (comp.get("status") or {}).get("type") or {}
+        detail = status.get("shortDetail")
+        situation = comp.get("situation") if isinstance(comp.get("situation"), dict) else {}
+        broadcasts = comp.get("broadcasts") or []
+        network = None
+        if broadcasts and isinstance(broadcasts[0], dict):
+            names = broadcasts[0].get("names") or []
+            if names:
+                network = str(names[0])
+        rows.append(
+            GameSummary(
+                away=away[0],
+                home=home[0],
+                away_score=away[1],
+                home_score=home[1],
+                state=state,
+                detail=detail if isinstance(detail, str) else None,
+                summary=_summary_text(state, situation),
+                broadcast=network,
+            )
+        )
+    return rows
+
+
 def parse_scoreboard(payload: dict, week: int) -> dict[str, Game]:
     """One scoreboard response into games keyed by the app's team code."""
     games: dict[str, Game] = {}
@@ -204,6 +309,7 @@ def parse_scoreboard(payload: dict, week: int) -> dict[str, Game]:
         home, away = sides.get("home"), sides.get("away")
         if not home or not away:
             continue
+        state, starts_at = _kickoff(event, comp)
         agreed = consensus(_books(comp.get("odds")))
         home_spread = agreed.home_spread
         away_spread = -home_spread if home_spread is not None else None
@@ -222,6 +328,8 @@ def parse_scoreboard(payload: dict, week: int) -> dict[str, Game]:
                 win_probability=win,
                 book_count=agreed.book_count,
                 books=agreed.books,
+                starts_at=starts_at,
+                state=state,
             )
     return games
 
@@ -231,6 +339,7 @@ class ESPNScheduleClient:
         self.cache_dir = cache_dir
         self.ttl_seconds = ttl_seconds
         self._memory: dict[int, tuple[float, SeasonBoard]] = {}
+        self._live: dict[tuple[int, int], tuple[float, dict[str, Game], list[GameSummary]]] = {}
         self._lock = asyncio.Lock()
 
     def _path(self, season: int) -> Path:
@@ -242,7 +351,7 @@ class ESPNScheduleClient:
             return None
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-            if raw.get("schema") != 2:
+            if raw.get("schema") != 3:
                 return None
             fetched = float(raw.get("fetched_at") or 0)
             weeks: dict[int, dict[str, Game]] = {}
@@ -257,7 +366,7 @@ class ESPNScheduleClient:
         path = self._path(season)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "schema": 2,
+            "schema": 3,
             "fetched_at": fetched_at,
             "season": season,
             "weeks": {
@@ -303,6 +412,34 @@ class ESPNScheduleClient:
             if games:
                 weeks[week] = games
         return SeasonBoard(weeks)
+
+    async def live_week(self, season: int, week: int) -> dict[str, Game]:
+        """One scoreboard, cached briefly so kickoff status stays current."""
+        key = (season, week)
+        now = time.time()
+        cached = self._live.get(key)
+        if cached and now - cached[0] < 45:
+            return cached[1]
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(15.0), headers={"User-Agent": "fantasy-ai/0.1"}) as client:
+                response = await client.get(
+                    SCOREBOARD_URL,
+                    params={"dates": str(season), "seasontype": "2", "week": str(week)},
+                )
+                response.raise_for_status()
+                payload = response.json()
+                games = parse_scoreboard(payload, week)
+                summaries = parse_game_summaries(payload)
+        except (httpx.HTTPError, ValueError) as exc:
+            log.warning("espn.live_week_failed", season=season, week=week, error=str(exc))
+            return cached[1] if cached else {}
+        self._live[key] = (time.time(), games, summaries)
+        return games
+
+    async def live_summaries(self, season: int, week: int) -> list[GameSummary]:
+        await self.live_week(season, week)
+        cached = self._live.get((season, week))
+        return list(cached[2]) if cached else []
 
     async def load(self, season: int) -> SeasonBoard:
         fresh = self._fresh(season)

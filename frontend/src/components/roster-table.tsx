@@ -28,8 +28,8 @@ export function RosterTable({
             <th className="px-5 py-2 font-medium">Slot</th>
             <th className="px-2 py-2 font-medium">Player</th>
             {!compact ? <th className="px-2 py-2 font-medium">Opp</th> : null}
-            {!compact ? <th className="px-2 py-2 font-medium">Bye</th> : null}
             {showProjection ? <th className="px-2 py-2 text-right font-medium">Proj</th> : null}
+            <th className="px-2 py-2 text-right font-medium" title="Points scored this season">Total</th>
             {showPoints ? <th className="px-5 py-2 text-right font-medium">Pts</th> : null}
           </tr>
         </thead>
@@ -68,8 +68,8 @@ export function RosterTable({
                   )}
                 </td>
                 {!compact ? <td className="px-2 py-2.5 text-xs text-slate-400">{p ? opponentLabel(p, week) ?? "—" : "—"}</td> : null}
-                {!compact ? <td className="px-2 py-2.5 text-xs text-slate-400">{p?.bye_week ?? "—"}</td> : null}
                 {showProjection ? <td className="px-2 py-2.5 text-right tabular-nums text-slate-300" title={p?.projection_note ?? undefined}>{formatPoints(p?.projected_points)}</td> : null}
+                <td className="px-2 py-2.5 text-right tabular-nums text-slate-200" title="Points scored this season">{formatPoints(p?.season_points)}</td>
                 {showPoints ? <td className="px-5 py-2.5 text-right tabular-nums font-medium text-slate-100">{formatPoints(s.points)}</td> : null}
               </tr>
             );

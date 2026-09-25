@@ -108,14 +108,58 @@ def test_value_needs_a_full_replacement_pool_and_skips_bye_and_out():
         _player("3", "Cal", "QB", 11, bye=True),
         _player("4", "Dee", "QB", 9, ruled_out=True, injury="Out"),
     ]
-    rows, notes = build_rankings(players, team_count=2, roster_positions=roster)
+    rows, truncated = build_rankings(players, team_count=2, roster_positions=roster)
     assert [row.player.name for row in rows] == ["Ace", "Bee"]
     assert rows[0].vorp == 5
     assert rows[1].vorp == 0
-    assert any("QB2" in note for note in notes)
-    assert any("not in these ranks" in note for note in notes)
-    assert any("DraftKings" in note for note in notes)
+    assert truncated is False
 
-    short, short_notes = build_rankings(players[:1], team_count=12, roster_positions=["QB"])
+    short, short_truncated = build_rankings(players[:1], team_count=12, roster_positions=["QB"])
     assert short[0].vorp is None
-    assert any("Value is blank" in note for note in short_notes)
+    assert short_truncated is False
+
+
+def test_flex_is_backs_receivers_and_tight_ends():
+    players = [
+        _player("1", "Back", "RB", 18),
+        _player("2", "Wide", "WR", 16),
+        _player("3", "Tight", "TE", 12),
+        _player("4", "Arm", "QB", 22),
+    ]
+    rows, truncated = build_rankings(
+        players, team_count=12, roster_positions=["RB", "WR", "TE", "FLEX"], position="FLEX"
+    )
+    assert [row.player.name for row in rows] == ["Back", "Wide", "Tight"]
+    assert truncated is False
+
+
+def test_search_keeps_overall_rank_past_the_browse_limit():
+    players = [_player(str(index), f"Player {index:03d}", "RB", 100 - index * 0.1) for index in range(100)]
+    browsed, truncated = build_rankings(players, team_count=1, roster_positions=["RB"])
+    assert len(browsed) == 80
+    assert truncated is True
+    assert "Player 099" not in {row.player.name for row in browsed}
+
+    found, found_truncated = build_rankings(
+        players, team_count=1, roster_positions=["RB"], query="player 099"
+    )
+    assert [row.player.name for row in found] == ["Player 099"]
+    assert found[0].rank == 100
+    assert found_truncated is False
+
+
+def test_team_and_roster_filters():
+    players = [
+        _player("1", "Home Back", "RB", 18, team="KC"),
+        _player("2", "Road Back", "RB", 12, team="LV"),
+        _player("3", "Other Back", "RB", 10, team="KC"),
+    ]
+    chiefs, _ = build_rankings(players, team_count=1, roster_positions=["RB"], nfl_team="kc")
+    assert [row.player.name for row in chiefs] == ["Home Back", "Other Back"]
+
+    mine, _ = build_rankings(players, team_count=1, roster_positions=["RB"], only_ids={"2"})
+    assert [row.player.name for row in mine] == ["Road Back"]
+    assert mine[0].rank == 2
+
+    free, _ = build_rankings(players, team_count=1, roster_positions=["RB"], exclude_ids={"1"})
+    assert [row.player.name for row in free] == ["Road Back", "Other Back"]

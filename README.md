@@ -1,4 +1,4 @@
-# Fantasy AI
+# OMAHA
 
 An AI-powered fantasy football manager. Connect a fantasy league, see your team,
 matchup, waivers and standings in one dashboard, and ask an AI assistant

@@ -3,12 +3,16 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light;
+  color-scheme: dark;
 }
 
 html,
 body {
   @apply h-full bg-surface font-sans text-slate-200 antialiased;
+  background-image:
+    radial-gradient(ellipse 110% 48% at 50% -14%, rgba(240, 197, 106, 0.18), transparent 58%),
+    radial-gradient(ellipse 80% 36% at 50% 115%, rgba(58, 170, 92, 0.1), transparent 62%);
+  background-attachment: fixed;
 }
 
 h1,
@@ -22,6 +26,92 @@ h3 {
 * {
   scrollbar-width: thin;
   scrollbar-color: theme("colors.surface.border") transparent;
+}
+
+::selection {
+  background: rgba(212, 162, 74, 0.45);
+  color: #f4efe4;
+}
+
+.page-enter {
+  animation: page-enter 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.veil-enter {
+  animation: veil-enter 220ms ease both;
+}
+
+.sheet-enter {
+  animation: sheet-enter 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.menu-enter {
+  animation: sheet-enter 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.paper-skeleton {
+  background: linear-gradient(90deg, #1c2822 0%, #314038 45%, #1c2822 100%);
+  background-size: 220% 100%;
+  animation: paper-shimmer 1.5s ease-in-out infinite;
+}
+
+tbody tr {
+  transition: background-color 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+tbody tr:hover {
+  background-color: rgba(58, 170, 92, 0.12);
+}
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes veil-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes sheet-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes paper-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 .prose-chat p {

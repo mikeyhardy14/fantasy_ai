@@ -3,14 +3,15 @@
 import { NoLeague } from "@/components/no-league";
 import { PageHeader } from "@/components/page-header";
 import { PlayerTable } from "@/components/player-table";
-import { RecommendationList } from "@/components/recommendation-card";
-import { PositionBadge } from "@/components/ui/badge";
+import { Badge, PositionBadge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import { EmptyState, ErrorState, SkeletonRows } from "@/components/ui/states";
+import { ErrorState, SkeletonRows } from "@/components/ui/states";
 import { useLeague } from "@/lib/league";
-import { useNeeds, usePlayers, useRecommendations, useTeam } from "@/lib/queries";
+import { useNeeds, usePlayers, useTeam, useWaiverSuggestions } from "@/lib/queries";
+import type { Player } from "@/lib/types";
 import { cn, GRADE_STYLES } from "@/lib/utils";
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
 
 export default function WaiversPage() {
   const { selected, loading, leagues } = useLeague();
@@ -19,15 +20,27 @@ export default function WaiversPage() {
   return <WaiversView leagueId={selected.id} week={selected.current_week} />;
 }
 
+function byProjection(players: Player[]): Player[] {
+  return [...players].sort((a, b) => {
+    if (a.projected_points == null && b.projected_points == null) return a.name.localeCompare(b.name);
+    if (a.projected_points == null) return 1;
+    if (b.projected_points == null) return -1;
+    return b.projected_points - a.projected_points;
+  });
+}
+
 function WaiversView({ leagueId, week }: { leagueId: string; week: number }) {
   const needs = useNeeds(leagueId);
   const team = useTeam(leagueId);
-  const recs = useRecommendations(leagueId);
-  const [position, setPosition] = useState<string>("");
-  const effectivePosition = position || needs.data?.weakest_positions[0] || "";
+  const suggestions = useWaiverSuggestions(leagueId);
+  // null follows the weakest position. "" is an explicit All.
+  const [position, setPosition] = useState<string | null>(null);
+  const showingAll = position === "";
+  const weakest = needs.data?.weakest_positions[0] ?? "";
+  const effectivePosition = showingAll ? "" : (position ?? weakest);
   const available = usePlayers(leagueId, { position: effectivePosition || undefined, available: true, limit: 40 });
 
-  const waiverRecs = (recs.data ?? []).filter((r) => ["WAIVER_TARGET", "DROP_PLAYER", "ROSTER_WEAKNESS", "ADD_PLAYER"].includes(r.type));
+  const source = suggestions.data?.generated_by === "gemini" ? "Gemini" : suggestions.data?.generated_by === "groq" ? "Groq" : suggestions.data?.generated_by === "openai" ? "OpenAI" : "Rule-based";
 
   return (
     <div className="space-y-6">
@@ -44,7 +57,11 @@ function WaiversView({ leagueId, week }: { leagueId: string; week: number }) {
           <Card>
             <CardHeader
               title="Available players"
-              description={effectivePosition ? `Filtered to ${effectivePosition}${!position ? " (your weakest position)" : ""}` : "All positions"}
+              description={
+                showingAll || !effectivePosition
+                  ? "All positions, highest projected first"
+                  : `Highest projected ${effectivePosition}${position === null ? ", your weakest position" : ""}`
+              }
               action={
                 <div className="flex flex-wrap gap-1">
                   {["", "QB", "RB", "WR", "TE", "K", "DEF"].map((p) => (
@@ -53,7 +70,7 @@ function WaiversView({ leagueId, week }: { leagueId: string; week: number }) {
                       onClick={() => setPosition(p)}
                       className={cn(
                         "rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset transition",
-                        (p === "" ? position === "" && !needs.data?.weakest_positions[0] : effectivePosition === p)
+                        (showingAll ? p === "" : p === effectivePosition)
                           ? "bg-brand-soft text-emerald-200 ring-emerald-500/40"
                           : "text-slate-400 ring-surface-border hover:text-slate-100",
                       )}
@@ -64,7 +81,7 @@ function WaiversView({ leagueId, week }: { leagueId: string; week: number }) {
                 </div>
               }
             />
-            {available.isLoading ? <CardBody><SkeletonRows rows={8} /></CardBody> : available.error ? <ErrorState error={available.error} onRetry={() => available.refetch()} /> : <PlayerTable players={available.data ?? []} emptyTitle="No available players at this position" week={week} />}
+            {available.isLoading ? <CardBody><SkeletonRows rows={8} /></CardBody> : available.error ? <ErrorState error={available.error} onRetry={() => available.refetch()} /> : <PlayerTable players={byProjection(available.data ?? [])} emptyTitle={showingAll ? "No available players" : "No available players at this position"} week={week} />}
           </Card>
         </div>
         <div className="space-y-6">
@@ -93,8 +110,24 @@ function WaiversView({ leagueId, week }: { leagueId: string; week: number }) {
             </CardBody>
           </Card>
           <Card>
-            <CardHeader title="Waiver recommendations" />
-            <CardBody>{recs.isLoading ? <SkeletonRows rows={3} /> : waiverRecs.length ? <RecommendationList recs={waiverRecs} /> : <EmptyState title="No waiver moves flagged" className="py-6" />}</CardBody>
+            <CardHeader
+              title="Suggestions"
+              action={suggestions.data ? <Badge className="bg-brand-soft text-emerald-200 ring-emerald-500/30">{source}</Badge> : null}
+            />
+            <CardBody>
+              {suggestions.isLoading ? (
+                <div className="space-y-3">
+                  <SkeletonRows rows={4} />
+                  <p className="text-xs text-slate-500">Checking the waiver wire…</p>
+                </div>
+              ) : suggestions.error ? (
+                <ErrorState error={suggestions.error} onRetry={() => suggestions.refetch()} className="py-4" />
+              ) : (
+                <div className="prose-chat text-sm text-slate-200">
+                  <ReactMarkdown>{suggestions.data?.message ?? ""}</ReactMarkdown>
+                </div>
+              )}
+            </CardBody>
           </Card>
         </div>
       </div>

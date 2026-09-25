@@ -2,7 +2,13 @@
 
 from uuid import uuid4
 
-from app.intelligence.lineup import is_eligible, lineup_issues, player_flags, suggest_swaps
+from app.intelligence.lineup import (
+    eligible_for_ir,
+    is_eligible,
+    lineup_issues,
+    player_flags,
+    suggest_swaps,
+)
 from app.intelligence.roster_needs import compute_roster_needs
 from app.schemas.league import PlayerOut, RosterSlotOut
 
@@ -28,6 +34,17 @@ def test_slot_eligibility():
     assert not is_eligible(player("A", "WR"), "RB")
     assert is_eligible(player("A", "RB", positions=["RB", "WR"]), "WR")
     assert is_eligible(player("A", "QB"), "BN")
+
+
+def test_ir_eligibility_follows_the_league_toggles():
+    assert eligible_for_ir("IR", "Injured Reserve", {})
+    assert eligible_for_ir("PUP", None, {})
+    assert eligible_for_ir(None, "Active", {"reserve_allow_out": True}) is False
+    assert eligible_for_ir("Questionable", "Active", {"reserve_allow_out": True}) is False
+    assert eligible_for_ir("Out", "Active", {}) is False
+    assert eligible_for_ir("Out", "Active", {"reserve_allow_out": True})
+    assert eligible_for_ir("Sus", "Active", {"reserve_allow_sus": 1})
+    assert eligible_for_ir("Doubtful", "Active", {"reserve_allow_doubtful": 0}) is False
 
 
 def test_flags():

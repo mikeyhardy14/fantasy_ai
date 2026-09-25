@@ -19,6 +19,24 @@ from app.schemas.ai import (
 from app.schemas.league import PlayerOut
 
 
+def omit_false_season_gap(analysis: TeamAnalysis, ctx: TeamContext) -> TeamAnalysis:
+    """Drop a claim that season points are missing when the roster already has them."""
+    has_totals = any(slot.player and slot.player.season_points is not None for slot in ctx.all_roster)
+    if not has_totals:
+        return analysis
+    kept = [gap for gap in analysis.data_gaps if not _false_season_gap(gap)]
+    if kept == analysis.data_gaps:
+        return analysis
+    return analysis.model_copy(update={"data_gaps": kept})
+
+
+def _false_season_gap(gap: str) -> bool:
+    text = gap.lower()
+    about_season = "season" in text or "cumulative" in text
+    called_missing = any(word in text for word in ("unavailable", "null", "not available", "missing"))
+    return about_season and called_missing
+
+
 def _data_gaps(ctx: TeamContext) -> list[str]:
     gaps = []
     if not ctx.projections_available:
@@ -160,6 +178,25 @@ def deterministic_chat(ctx: TeamContext, recs: list[Recommendation], question: s
         generated_by="deterministic",
         suggested_questions=["Who should I start at FLEX?", "What position should I target on waivers?", "What are my roster's weaknesses?"],
     )
+
+
+def deterministic_waivers(ctx: TeamContext, recs: list[Recommendation]) -> str:
+    lines = ["**Waiver suggestions from roster rules:**"]
+    targets = [r for r in recs if r.type == RecommendationType.WAIVER_TARGET]
+    drops = [r for r in recs if r.type == RecommendationType.DROP_PLAYER]
+    if targets:
+        lines += [f"- {r.title}: {r.reason}" for r in targets]
+    else:
+        lines.append("- No add is flagged from injuries, byes, or depth.")
+    if ctx.needs.open_roster_spots > 0:
+        lines.append(f"- {ctx.needs.open_roster_spots} open roster spot(s), so no drop is required.")
+    elif drops:
+        lines += [f"- {r.title}: {r.reason}" for r in drops]
+    else:
+        lines.append("- No drop is flagged.")
+    weak = ", ".join(ctx.needs.weakest_positions) or "none"
+    lines.append(f"Weakest positions: {weak}.")
+    return "\n".join(lines)
 
 
 def deterministic_trade(ctx: TeamContext, give: list[PlayerOut], receive: list[PlayerOut]) -> TradeAnalysis:

@@ -35,16 +35,94 @@ const team: Team = {
 };
 
 describe("LineupBoard", () => {
-  it("benches a starter from the slot box and offers IR", async () => {
+  it("benches a starter and hides IR when he is not eligible", async () => {
     const onMove = vi.fn();
     const user = userEvent.setup();
     render(<LineupBoard team={team} irCapacity={1} pending={false} notice={null} onMove={onMove} />);
 
     await user.click(screen.getByRole("button", { name: "Move Quinn Arrow" }));
     expect(screen.getByRole("menuitem", { name: "Bench" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "IR full" })).toBeDisabled();
+    expect(screen.queryByRole("menuitem", { name: "IR" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "IR full" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("menuitem", { name: "Bench" }));
     expect(onMove).toHaveBeenCalledWith({ playerId: "qb-1", destination: "bench", slotIndex: undefined });
+  });
+
+  it("offers IR only for a designation this league allows", async () => {
+    const onMove = vi.fn();
+    const user = userEvent.setup();
+    const out = player({ id: "rb-out", name: "Out Back", position: "RB", fantasy_positions: ["RB"], injury_status: "Out" });
+    render(
+      <LineupBoard
+        team={{ ...team, bench: [slot({ slot: "BN", slot_index: null, is_starter: false, player: out, points: null })] }}
+        irCapacity={2}
+        irRules={{ out: true }}
+        pending={false}
+        notice={null}
+        onMove={onMove}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Move Out Back" }));
+    expect(screen.getByRole("menuitem", { name: "IR" })).toBeInTheDocument();
+  });
+
+  it("shows the player being subbed, their position color, and who they replace", async () => {
+    const onMove = vi.fn();
+    const user = userEvent.setup();
+    const incumbent = player({ id: "rb-2", name: "Starter Back", position: "RB", fantasy_positions: ["RB"], headshot_url: "https://example.com/starter.png" });
+    render(
+      <LineupBoard
+        team={{
+          ...team,
+          starters: [
+            slot({ slot: "QB", slot_index: 0, player: starter, points: 18 }),
+            slot({ slot: "RB", slot_index: 1, player: incumbent, points: 12 }),
+          ],
+        }}
+        irCapacity={1}
+        pending={false}
+        notice={null}
+        onMove={onMove}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Move Backup Back" }));
+    const moving = screen.getByTestId("sub-player");
+    expect(moving).toHaveTextContent("Backup Back");
+    expect(moving.querySelector("[data-testid='position-badge']")).toHaveClass("text-brand");
+    const replace = screen.getByRole("menuitem", { name: "Start at RB, replace Starter Back" });
+    expect(replace).toHaveTextContent("Starter Back");
+    expect(replace.querySelector("img")).toHaveAttribute("src", "https://example.com/starter.png");
+    expect(replace.querySelector(".text-brand")).toHaveTextContent("RB");
+  });
+
+  it("subs a bench player in from the starting lineup", async () => {
+    const onMove = vi.fn();
+    const user = userEvent.setup();
+    const backupQb = player({
+      id: "qb-2",
+      name: "Backup Arm",
+      position: "QB",
+      fantasy_positions: ["QB"],
+      headshot_url: "https://example.com/qb.png",
+    });
+    render(
+      <LineupBoard
+        team={{ ...team, bench: [slot({ slot: "BN", slot_index: null, is_starter: false, player: backupQb, points: null }), ...team.bench] }}
+        irCapacity={1}
+        pending={false}
+        notice={null}
+        onMove={onMove}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Move Quinn Arrow" }));
+    const sub = screen.getByRole("menuitem", { name: "Sub in Backup Arm" });
+    expect(sub).toHaveTextContent("14.2 proj");
+    expect(sub.querySelector("img")).toHaveAttribute("src", "https://example.com/qb.png");
+    expect(sub.querySelector(".text-rose-300")).toHaveTextContent("QB");
+    await user.click(sub);
+    expect(onMove).toHaveBeenCalledWith({ playerId: "qb-2", destination: "starter", slotIndex: 0 });
   });
 
   it("starts a bench player in an open eligible slot from the slot box", async () => {

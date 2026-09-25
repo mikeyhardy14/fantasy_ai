@@ -7,7 +7,13 @@ from httpx import Response
 
 from app.models import Player, PlayerExternalId
 from app.nfl_data.base import player_key
-from app.nfl_data.espn import ESPNScheduleClient, SCOREBOARD_URL, SeasonBoard, parse_scoreboard
+from app.nfl_data.espn import (
+    SCOREBOARD_URL,
+    ESPNScheduleClient,
+    SeasonBoard,
+    parse_game_summaries,
+    parse_scoreboard,
+)
 from app.nfl_data.headshot import headshot_url
 from app.nfl_data.live import LiveNFLDataProvider
 from app.nfl_data.local_file import LocalFileNFLDataProvider
@@ -37,6 +43,41 @@ def _event(home: str, away: str, home_line: str, away_line: str, total: float) -
     }
 
 
+def test_live_scoreboard_keeps_the_score_and_the_last_play():
+    rows = parse_game_summaries(
+        {
+            "events": [
+                {
+                    "competitions": [
+                        {
+                            "status": {"type": {"state": "in", "shortDetail": "12:08 - 3rd"}},
+                            "broadcasts": [{"names": ["Prime Video"]}],
+                            "competitors": [
+                                {"homeAway": "home", "score": "7", "team": {"abbreviation": "GB"}},
+                                {"homeAway": "away", "score": "17", "team": {"abbreviation": "ATL"}},
+                            ],
+                            "situation": {
+                                "downDistanceText": "1st & 10 at ATL 16",
+                                "lastPlay": {
+                                    "text": "Official Timeout at 12:08.",
+                                    "drive": {"description": "6 plays, 54 yards, 2:52"},
+                                },
+                            },
+                        }
+                    ]
+                }
+            ]
+        }
+    )
+    assert len(rows) == 1
+    game = rows[0]
+    assert (game.away, game.away_score, game.home, game.home_score) == ("ATL", 17, "GB", 7)
+    assert game.state == "in"
+    assert game.detail == "12:08 - 3rd"
+    assert game.broadcast == "Prime Video"
+    assert game.summary == "Official Timeout at 12:08 · 6 plays, 54 yards, 2:52 · 1st & 10 at ATL 16"
+
+
 def _board() -> SeasonBoard:
     week5 = parse_scoreboard(
         {
@@ -63,6 +104,32 @@ class _StaticEspn:
 def test_implied_points_split_the_total():
     assert implied_team_points(47.5, -3.5) == 25.5
     assert implied_team_points(47.5, 3.5) == 22.0
+
+
+def test_scoreboard_reads_kickoff_and_whether_the_game_has_started():
+    games = parse_scoreboard(
+        {
+            "events": [
+                {
+                    "date": "2026-09-24T20:15:00Z",
+                    "competitions": [
+                        {
+                            "status": {"type": {"state": "in"}},
+                            "competitors": [
+                                {"homeAway": "home", "team": {"abbreviation": "KC"}},
+                                {"homeAway": "away", "team": {"abbreviation": "BUF"}},
+                            ],
+                        }
+                    ],
+                }
+            ]
+        },
+        3,
+    )
+    kc = games["KC"]
+    assert kc.state == "in"
+    assert kc.starts_at == "2026-09-24T20:15:00Z"
+    assert kc.as_schedule().state == "in"
 
 
 def test_parse_home_dog_and_washington_alias():

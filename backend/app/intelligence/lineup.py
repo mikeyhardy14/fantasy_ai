@@ -12,6 +12,35 @@ def eligible_positions_for_slot(slot: str) -> tuple[str, ...]:
     return SLOT_ELIGIBILITY.get(slot, (slot,))
 
 
+def eligible_for_ir(injury_status: str | None, status: str | None, settings: dict | None = None) -> bool:
+    """Sleeper IR accepts IR and PUP. Out, Doubtful, Suspended, and the rest follow league toggles."""
+    settings = settings or {}
+    label = (injury_status or "").strip().upper()
+    body = (status or "").strip().lower()
+    if label in {"IR", "PUP"} or "injured reserve" in body or body == "pup":
+        return True
+    toggles = {
+        "OUT": "reserve_allow_out",
+        "O": "reserve_allow_out",
+        "DOUBTFUL": "reserve_allow_doubtful",
+        "D": "reserve_allow_doubtful",
+        "SUS": "reserve_allow_sus",
+        "SUSPENDED": "reserve_allow_sus",
+        "COV": "reserve_allow_cov",
+        "COVID": "reserve_allow_cov",
+        "NA": "reserve_allow_na",
+        "NFI": "reserve_allow_na",
+        "DNR": "reserve_allow_dnr",
+    }
+    key = toggles.get(label)
+    if key is None:
+        return False
+    value = settings.get(key)
+    if isinstance(value, str):
+        return value not in {"", "0", "false", "False"}
+    return bool(value)
+
+
 def is_eligible(player: PlayerOut, slot: str) -> bool:
     if slot in NON_LINEUP_SLOTS:
         return True

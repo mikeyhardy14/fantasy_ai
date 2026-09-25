@@ -29,7 +29,7 @@ export function PlayerTable({
             <th className="px-2 py-2 font-medium">Team</th>
             <th className="px-2 py-2 font-medium">Opp</th>
             <th className="px-2 py-2 font-medium">Status</th>
-            <th className="px-2 py-2 font-medium">Bye</th>
+            <th className="px-2 py-2 text-right font-medium" title="Points scored this season">Pts</th>
             <th className="px-2 py-2 text-right font-medium">Proj</th>
             <th className="px-5 py-2 text-right font-medium">PPG</th>
           </tr>
@@ -65,7 +65,7 @@ export function PlayerTable({
                     <span className="text-xs text-emerald-300/80">Healthy</span>
                   )}
                 </td>
-                <td className="px-2 py-2.5 text-slate-400">{p.bye_week ?? "—"}</td>
+                <td className="px-2 py-2.5 text-right tabular-nums text-slate-200" title="Points scored this season">{formatPoints(p.season_points)}</td>
                 <td className="px-2 py-2.5 text-right tabular-nums text-slate-200" title={p.projection_note ?? undefined}>{formatPoints(p.projected_points)}</td>
                 <td className="px-5 py-2.5 text-right tabular-nums text-slate-400">{formatPoints(p.points_per_game)}</td>
               </tr>

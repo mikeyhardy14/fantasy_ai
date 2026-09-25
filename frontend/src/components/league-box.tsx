@@ -1,5 +1,6 @@
 "use client";
 
+import { LineupBoard, type IrRules, type RosterDestination } from "@/components/lineup-board";
 import { opponentLabel, PlayerFace, seasonTitle } from "@/components/player-face";
 import { PlayerName } from "@/components/player-sheet";
 import { PositionBadge } from "@/components/ui/badge";
@@ -8,6 +9,8 @@ import type { League, Matchup, Team } from "@/lib/types";
 import { cn, formatPoints, slotHasProblem } from "@/lib/utils";
 import { ExternalLink } from "lucide-react";
 import Link from "next/link";
+
+export type LineupMove = { playerId: string; destination: RosterDestination; slotIndex?: number };
 
 const PLATFORM_STYLES: Record<string, string> = {
   sleeper: "bg-slate-100 text-slate-950",
@@ -57,6 +60,13 @@ export function LeagueBox({
   loading,
   error,
   onSelect,
+  canEdit = false,
+  irCapacity = 0,
+  irRules,
+  lineupPending = false,
+  lineupNotice = null,
+  needsToken = false,
+  onMove,
 }: {
   league: League;
   team?: Team;
@@ -64,6 +74,13 @@ export function LeagueBox({
   loading: boolean;
   error: Error | null;
   onSelect: () => void;
+  canEdit?: boolean;
+  irCapacity?: number;
+  irRules?: IrRules;
+  lineupPending?: boolean;
+  lineupNotice?: string | null;
+  needsToken?: boolean;
+  onMove?: (move: LineupMove) => void;
 }) {
   const location = leagueLocation(league);
   const issues = team?.lineup_issues.length ?? 0;
@@ -73,7 +90,7 @@ export function LeagueBox({
     <article
       data-testid="league-box"
       className={cn(
-        "flex flex-col overflow-hidden border border-surface-border bg-surface-raised",
+        "flex flex-col border border-surface-border bg-surface-raised",
         issues && "border-l-2 border-l-red-400",
       )}
     >
@@ -135,7 +152,20 @@ export function LeagueBox({
         </p>
       ) : null}
 
-      <ul className="mt-auto divide-y divide-surface-border/50 border-t border-surface-border">
+      {canEdit && team && onMove ? (
+        <div className="border-t border-surface-border">
+          <LineupBoard
+            team={team}
+            irCapacity={irCapacity}
+            irRules={irRules}
+            pending={lineupPending}
+            notice={lineupNotice}
+            onMove={onMove}
+            projection
+          />
+        </div>
+      ) : (
+      <ul className="divide-y divide-surface-border/50 border-t border-surface-border">
         {loading ? (
           <li className="px-4 py-6 text-center text-[11px] text-slate-500">Loading starters…</li>
         ) : (team?.starters.length ?? 0) === 0 ? (
@@ -163,12 +193,22 @@ export function LeagueBox({
                     </span>
                   ) : null}
                 </span>
+                <span className="w-10 text-right" title={slot.player?.projection_note ?? "Projected points this week"}>
+                  <span className="block tabular-nums text-slate-200">{formatPoints(slot.player?.projected_points)}</span>
+                  <span className="block text-[10px] uppercase tracking-wide text-slate-500">proj</span>
+                </span>
                 <span className="w-10 text-right tabular-nums text-slate-200">{formatPoints(slot.points)}</span>
               </li>
             );
           })
         )}
       </ul>
+      )}
+      {needsToken ? (
+        <p className="border-t border-surface-border px-4 py-3 text-[11px] text-slate-500">
+          <Link href="/settings" className="text-brand hover:underline">Save a Sleeper token in Settings</Link> to set this lineup from here.
+        </p>
+      ) : null}
     </article>
   );
 }

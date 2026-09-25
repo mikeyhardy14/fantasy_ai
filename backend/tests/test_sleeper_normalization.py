@@ -15,6 +15,7 @@ def test_map_league_details_extracts_settings_and_slots():
     assert league.roster_settings["lineup_slots"] == ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DEF"]
     assert league.roster_settings["bench_slots"] == 2
     assert league.roster_settings["reserve_slots"] == 1
+    assert league.roster_settings["reserve_allow_out"] is False
     assert league.league_settings["scoring_type"] == "PPR"
     assert league.league_settings["waiver_type"] == "faab"
     assert league.league_settings["waiver_budget"] == 100

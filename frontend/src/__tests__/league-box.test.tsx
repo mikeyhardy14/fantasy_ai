@@ -121,11 +121,42 @@ describe("LeagueBox", () => {
     expect(screen.getByTestId("league-avatar")).toHaveAttribute("src", "https://sleepercdn.com/avatars/thumbs/abc");
     expect(screen.getByRole("link", { name: /Open on Sleeper/ })).toHaveAttribute("href", "https://sleeper.com/leagues/999");
     expect(screen.getByText("Quinn Arrow")).toBeInTheDocument();
+    expect(screen.getByText("proj")).toBeInTheDocument();
+    expect(screen.getByText("14.2")).toBeInTheDocument();
+    expect(screen.queryByText("total")).toBeNull();
+    expect(screen.getByRole("list")).not.toHaveClass("mt-auto");
     expect(screen.getByText("1 lineup issue")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("link", { name: "Roster" }));
     expect(onSelect).toHaveBeenCalled();
     expect(screen.getByRole("link", { name: "Roster" })).toHaveAttribute("href", "/team");
+  });
+
+  it("sets a lineup from the slot box when Sleeper writes are on", async () => {
+    const onMove = vi.fn();
+    const editable = {
+      ...team,
+      starters: [slot({ slot: "QB", slot_index: 0, player: player({ id: "qb-1", name: "Quinn Arrow", position: "QB", fantasy_positions: ["QB"] }), points: 18.4 })],
+      bench: [slot({ slot: "BN", slot_index: null, is_starter: false, player: player({ id: "rb-1", name: "Backup Back", position: "RB", fantasy_positions: ["RB"] }), points: null })],
+      lineup_slots: ["QB", "RB"],
+    };
+    render(
+      <LeagueBox
+        league={league()}
+        team={editable}
+        matchup={matchup}
+        loading={false}
+        error={null}
+        onSelect={vi.fn()}
+        canEdit
+        irCapacity={1}
+        onMove={onMove}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Move Backup Back" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Start at RB" }));
+    expect(onMove).toHaveBeenCalledWith({ playerId: "rb-1", destination: "starter", slotIndex: 1 });
   });
 
   it("uses initials when a league has no icon", () => {

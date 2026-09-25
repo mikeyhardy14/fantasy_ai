@@ -28,6 +28,7 @@ describe("PlayerSheetDialog", () => {
   it("shows the prop math and recent stats in tables", () => {
     render(<PlayerSheetDialog sheet={sheet} loading={false} error={null} onClose={() => undefined} />);
     expect(screen.getByText("Quinn Arrow")).toBeInTheDocument();
+    expect(screen.getByText(/40\.1 total/)).toBeInTheDocument();
     expect(screen.getByText("Rush yds")).toBeInTheDocument();
     expect(screen.getByText("100.5")).toBeInTheDocument();
     expect(screen.getByText("10.05")).toBeInTheDocument();

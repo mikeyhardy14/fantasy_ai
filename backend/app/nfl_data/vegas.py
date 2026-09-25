@@ -177,7 +177,11 @@ def explain_projection(
     if projection is None:
         if on_bye:
             return [f"No projection. {club} is on bye."]
-        return ["No projection. There is no saved number and no posted prop line for this player."]
+        return [
+            "No projection. There is no earlier game to apply the Vegas total, and no posted prop line for this player."
+        ]
+    if projection.source == "sleeper":
+        return [f"{projection.points:g} is Sleeper's projected points for this week."]
     if projection.source != "vegas":
         return [
             f"{projection.points:g} is a saved projection ({projection.source}).",
@@ -209,6 +213,22 @@ def explain_projection(
                 f"Interceptions over {detail['pass_int_ou']:g} at {_american(detail['pass_int_over'])} / {_american(detail['pass_int_under'])} "
                 f"is a {detail['pass_int_p']:.0%} chance of {minimum} or more after the vig is removed. "
                 f"Expected interceptions are {detail['pass_int']:.2f}."
+            )
+        return lines
+    if detail.get("vegas_ff") == 1:
+        games = int(detail.get("games") or 0)
+        implied = detail.get("implied_points")
+        margin = detail.get("margin")
+        game_word = "game" if games == 1 else "games"
+        lines = [
+            f"{projection.points:g} is this player's share of the points Vegas implies for {club}.",
+            f"{club} is implied for {implied:g} points, with an expected margin of {margin:+g}.",
+            f"The share uses {games} earlier {game_word} this season. The game being projected is not included.",
+        ]
+        if detail.get("kind") == 3:
+            lines.append(
+                "Targets, yards, and touchdowns shrink toward the position average. "
+                "Route counts and end-zone targets are not in the stat feed, so those pieces use snap share and target share."
             )
         return lines
     if "opponent_implied" in detail:

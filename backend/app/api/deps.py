@@ -20,7 +20,7 @@ from app.nfl_data import LocalFileNFLDataProvider, NFLDataProvider
 from app.nfl_data.espn import ESPNScheduleClient
 from app.nfl_data.live import LiveNFLDataProvider
 from app.nfl_data.props import EspnPropClient
-from app.nfl_data.sleeper_stats import SleeperWeeklyStats
+from app.nfl_data.sleeper_stats import SleeperProjections, SleeperWeeklyStats
 from app.providers import ProviderRegistry
 from app.repositories import LeagueRepository, UserRepository
 from app.services.league_context import LeagueContextService
@@ -51,9 +51,11 @@ class AppState:
             )
         self.weekly_stats: SleeperWeeklyStats | None = None
         self.props: EspnPropClient | None = None
+        self.sleeper_projections: SleeperProjections | None = None
         if settings.environment != "test":
             self.weekly_stats = SleeperWeeklyStats(settings.espn_schedule_cache_dir, settings.sleeper_base_url)
             self.props = EspnPropClient(settings.espn_schedule_cache_dir, settings.sleeper_player_cache_path)
+            self.sleeper_projections = SleeperProjections(settings.espn_schedule_cache_dir, settings.sleeper_base_url)
         self.llm: LLMClient | None = build_llm(settings)
 
 
@@ -116,7 +118,9 @@ def get_nfl_data(state: StateDep) -> NFLDataProvider:
 
 
 def get_context_service(session: SessionDep, state: StateDep) -> LeagueContextService:
-    return LeagueContextService(session, state.nfl_data, state.weekly_stats, state.props)
+    return LeagueContextService(
+        session, state.nfl_data, state.weekly_stats, state.props, state.sleeper_projections
+    )
 
 
 ContextService = Annotated[LeagueContextService, Depends(get_context_service)]

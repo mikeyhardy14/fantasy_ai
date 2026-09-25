@@ -39,10 +39,10 @@ export const POSITION_COLORS: Record<string, string> = {
   RB: "bg-brand-soft text-brand ring-brand/20",
   WR: "bg-sky-500/10 text-sky-300 ring-sky-500/25",
   TE: "bg-amber-500/10 text-amber-300 ring-amber-500/25",
-  K: "bg-[#efe6d6] text-[#6b4e2e] ring-[#d9c7a8]",
+  K: "bg-[#3a3018] text-amber-200 ring-amber-400/30",
   DEF: "bg-surface-overlay text-slate-200 ring-surface-border",
   FLEX: "bg-teal-500/10 text-teal-300 ring-teal-500/25",
-  SUPER_FLEX: "bg-[#efe6d6] text-[#6b4e2e] ring-[#d9c7a8]",
+  SUPER_FLEX: "bg-[#3a3018] text-amber-200 ring-amber-400/30",
   BN: "bg-surface-overlay text-slate-400 ring-surface-border",
   IR: "bg-red-500/10 text-red-300 ring-red-500/25",
 };

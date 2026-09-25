@@ -88,6 +88,39 @@ def _scoring_column(scoring: dict) -> tuple[str, str]:
     return "pts_half_ppr", "Sleeper half PPR"
 
 
+def projection_points(stats: dict | None, scoring: dict | None) -> tuple[float | None, str]:
+    """Sleeper's published week total for this league's reception scoring."""
+    column, label = _scoring_column(scoring or {})
+    if not stats:
+        return None, label
+    value = stats.get(column)
+    if value is None:
+        return None, label
+    try:
+        return round(float(value), 1), label
+    except (TypeError, ValueError):
+        return None, label
+
+
+def index_projections(payload: object) -> dict[str, dict]:
+    """Map Sleeper's projection list (or id dict) to player id -> stat line."""
+    rows: list = []
+    if isinstance(payload, list):
+        rows = payload
+    elif isinstance(payload, dict):
+        rows = list(payload.values())
+    indexed: dict[str, dict] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        player_id = row.get("player_id")
+        stats = row.get("stats")
+        if player_id is None or not isinstance(stats, dict):
+            continue
+        indexed[str(player_id)] = stats
+    return indexed
+
+
 def score_stats(raw: dict, scoring: dict | None) -> tuple[float | None, str]:
     """League points when the stat keys overlap the scoring settings, else Sleeper's column."""
     scoring = scoring or {}
@@ -175,20 +208,21 @@ class SleeperWeeklyStats:
         tmp.write_text(json.dumps({"weeks": weeks}), encoding="utf-8")
         tmp.replace(path)
 
-    async def week(self, season: int, week: int) -> dict:
+    async def week(self, season: int, week: int, *, max_age: float | None = None) -> dict:
         key = (season, week)
+        limit = self.ttl_seconds if max_age is None else max_age
         now = time.time()
         cached = self._memory.get(key)
-        if cached and now - cached[0] < self.ttl_seconds:
+        if cached and now - cached[0] < limit:
             return cached[1]
         disk = self._read_disk(season).get("weeks", {}).get(str(week))
-        if isinstance(disk, dict) and now - float(disk.get("fetched_at") or 0) < self.ttl_seconds:
+        if isinstance(disk, dict) and now - float(disk.get("fetched_at") or 0) < limit:
             stats = disk.get("stats") if isinstance(disk.get("stats"), dict) else {}
             self._memory[key] = (float(disk["fetched_at"]), stats)
             return stats
         async with self._lock:
             cached = self._memory.get(key)
-            if cached and now - cached[0] < self.ttl_seconds:
+            if cached and time.time() - cached[0] < limit:
                 return cached[1]
             stats = await self._fetch(season, week)
             fetched = time.time()
@@ -241,3 +275,93 @@ class SleeperWeeklyStats:
             if len(games) >= limit:
                 break
         return games
+
+
+class SleeperProjections:
+    """Weekly projected points published by Sleeper. One fetch covers the slate."""
+
+    def __init__(self, cache_dir: Path, base_url: str, ttl_seconds: int = 3600):
+        self.cache_dir = cache_dir
+        self.base_url = base_url.rstrip("/")
+        self.ttl_seconds = ttl_seconds
+        self._memory: dict[tuple[int, int], tuple[float, dict[str, dict]]] = {}
+        self._lock = asyncio.Lock()
+
+    def _root(self) -> str:
+        if self.base_url.endswith("/v1"):
+            return self.base_url[: -len("/v1")]
+        return self.base_url
+
+    def _path(self, season: int) -> Path:
+        return self.cache_dir / f"sleeper_projections_{season}.json"
+
+    async def player(self, season: int, week: int, sleeper_id: str) -> dict | None:
+        slate = await self.week(season, week)
+        stats = slate.get(str(sleeper_id))
+        return stats if isinstance(stats, dict) else None
+
+    async def week(self, season: int, week: int) -> dict[str, dict]:
+        key = (season, week)
+        now = time.time()
+        cached = self._memory.get(key)
+        if cached and now - cached[0] < self.ttl_seconds:
+            return cached[1]
+        disk = self._read_disk(season, week, now)
+        if disk is not None:
+            self._memory[key] = (now, disk)
+            return disk
+        async with self._lock:
+            cached = self._memory.get(key)
+            if cached and time.time() - cached[0] < self.ttl_seconds:
+                return cached[1]
+            stats = await self._fetch(season, week)
+            fetched = time.time()
+            self._memory[key] = (fetched, stats)
+            if stats:
+                self._write_disk(season, week, fetched, stats)
+            return stats
+
+    def _read_disk(self, season: int, week: int, now: float) -> dict[str, dict] | None:
+        path = self._path(season)
+        if not path.exists():
+            return None
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            blob = (raw.get("weeks") or {}).get(str(week))
+            if not isinstance(blob, dict):
+                return None
+            if now - float(blob.get("fetched_at") or 0) >= self.ttl_seconds:
+                return None
+            stats = blob.get("stats")
+            return stats if isinstance(stats, dict) else {}
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return None
+
+    def _write_disk(self, season: int, week: int, fetched: float, stats: dict) -> None:
+        path = self._path(season)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            stored = {}
+            if path.exists():
+                stored = json.loads(path.read_text(encoding="utf-8"))
+            weeks = stored.get("weeks") if isinstance(stored.get("weeks"), dict) else {}
+            weeks[str(week)] = {"fetched_at": fetched, "stats": stats}
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"weeks": weeks}), encoding="utf-8")
+            tmp.replace(path)
+        except (OSError, json.JSONDecodeError) as exc:
+            log.warning("sleeper.projections_cache_failed", error=str(exc))
+
+    async def _fetch(self, season: int, week: int) -> dict[str, dict]:
+        url = f"{self._root()}/projections/nfl/{season}/{week}?season_type=regular"
+        try:
+            async with httpx.AsyncClient(timeout=20.0, headers={"User-Agent": "fantasy-ai/0.1"}) as client:
+                response = await client.get(url)
+                if response.status_code == 404:
+                    return {}
+                response.raise_for_status()
+                body = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            log.warning("sleeper.projections_failed", season=season, week=week, error=str(exc))
+            return {}
+        return index_projections(body)

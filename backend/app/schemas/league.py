@@ -102,6 +102,7 @@ class PlayerOut(BaseModel):
     opponent: str | None = None
     projected_points: float | None = None
     projection_note: str | None = None
+    projection_detail: dict[str, float] = Field(default_factory=dict)
     season_points: float | None = None
     points_per_game: float | None = None
     headshot_url: str | None = None
@@ -123,6 +124,7 @@ class RosterSlotOut(BaseModel):
     is_starter: bool
     player: PlayerOut | None
     points: float | None = None  # actual points this week when known
+    stat_line: str | None = None  # counting stats while that player's game is on
     flags: list[str] = Field(default_factory=list)  # e.g. "INJURED", "BYE", "OUT"
 
 
@@ -159,6 +161,10 @@ class LineupUpdateRequest(BaseModel):
     starter_player_ids: list[UUID | None] = Field(min_length=1, max_length=20)
 
 
+class AddPlayerRequest(BaseModel):
+    player_id: UUID
+
+
 class RosterMoveRequest(BaseModel):
     week: int = Field(ge=1, le=18)
     player_id: UUID
@@ -184,12 +190,32 @@ class MatchupSideOut(BaseModel):
     starters: list[RosterSlotOut]
 
 
+class SlotCallOut(BaseModel):
+    slot_index: int
+    start_name: str
+    win_prob: float
+    confidence: str
+
+
+class NflGameOut(BaseModel):
+    away: str
+    home: str
+    away_score: int | None = None
+    home_score: int | None = None
+    state: str | None = None
+    detail: str | None = None
+    summary: str | None = None
+    broadcast: str | None = None
+
+
 class MatchupOut(BaseModel):
     week: int
     is_bye: bool
     user: MatchupSideOut
     opponent: MatchupSideOut | None
     status: str  # "upcoming" | "in_progress" | "final" | "bye"
+    calls: list[SlotCallOut] = Field(default_factory=list)
+    games: list[NflGameOut] = Field(default_factory=list)
 
 
 class StandingsRowOut(TeamSummaryOut):
@@ -208,6 +234,7 @@ class TransactionOut(BaseModel):
     team_names: list[str]
     faab_bid: int | None = None
     involves_user: bool = False
+    picks: list[str] = Field(default_factory=list)
 
 
 class PositionNeedOut(BaseModel):
@@ -253,10 +280,13 @@ class RankingRowOut(BaseModel):
     books: list[str] = Field(default_factory=list)
     projected_points: float | None = None
     projection_source: str | None = None
+    season_points: float | None = None
     vorp: float | None = None
+    owned: Literal["you", "league"] | None = None
 
 
 class RankingsOut(BaseModel):
     week: int
-    notes: list[str]
+    notes: list[str] = []
+    truncated: bool = False
     rows: list[RankingRowOut]

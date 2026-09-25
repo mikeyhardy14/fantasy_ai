@@ -18,8 +18,9 @@ const newsreader = Newsreader({
 });
 
 export const metadata: Metadata = {
-  title: "Fantasy",
+  title: "OMAHA",
   description: "Rosters, matchups, and waivers for the leagues you import.",
+  icons: { icon: "/omaha-logo.png" },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

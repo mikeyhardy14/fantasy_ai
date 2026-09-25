@@ -58,11 +58,18 @@ export function PlayerFace({
   );
 }
 
+export function upcomingGames(games: ScheduleGame[], week?: number, count = 2): ScheduleGame[] {
+  const ordered = [...games].sort((a, b) => a.week - b.week);
+  const upcoming = week == null ? ordered : ordered.filter((game) => game.week >= week);
+  return upcoming.slice(0, count);
+}
+
 export function SeasonStrip({ games, week }: { games: ScheduleGame[]; week?: number }) {
-  if (!games.length) return null;
+  const shown = upcomingGames(games, week);
+  if (!shown.length) return null;
   return (
     <p className="mt-1 flex max-w-xl flex-wrap gap-x-1.5 gap-y-0.5 text-[10px] leading-4 text-slate-500">
-      {games.map((game) => (
+      {shown.map((game) => (
         <span key={game.week} className={cn(week != null && game.week === week && "font-semibold text-slate-100")}>
           {game.week} {gameLabel(game)}
         </span>
