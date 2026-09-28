@@ -1,4 +1,5 @@
 import { Chat } from "@/components/chat";
+import { ToastProvider } from "@/components/toast";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -49,7 +50,9 @@ describe("Chat subs", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(
       <QueryClientProvider client={client}>
-        <Chat leagueId="league-1" aiEnabled />
+        <ToastProvider>
+          <Chat leagueId="league-1" aiEnabled />
+        </ToastProvider>
       </QueryClientProvider>,
     );
 
@@ -61,7 +64,7 @@ describe("Chat subs", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByRole("button", { name: "Approve" }));
-    expect(await screen.findByTestId("sub-result")).toHaveTextContent("Cooper Rush is now starting at QB.");
+    expect(await screen.findByTestId("toast")).toHaveTextContent("Cooper Rush is now starting at QB.");
     const move = fetchMock.mock.calls[1];
     expect(String(move[0])).toContain("/api/leagues/league-1/lineup/move");
     expect(JSON.parse(String(move[1].body))).toMatchObject({
@@ -111,13 +114,15 @@ describe("Chat subs", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(
       <QueryClientProvider client={client}>
-        <Chat leagueId="league-1" aiEnabled />
+        <ToastProvider>
+          <Chat leagueId="league-1" aiEnabled />
+        </ToastProvider>
       </QueryClientProvider>,
     );
 
     await user.type(screen.getByLabelText("Message"), "start Cooper Rush over Lamar Jackson");
     await user.click(screen.getByRole("button", { name: "Send" }));
-    expect(await screen.findByTestId("sub-result")).toHaveTextContent("Cooper Rush is now starting at QB.");
+    expect(await screen.findByTestId("toast")).toHaveTextContent("Cooper Rush is now starting at QB.");
     expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toMatchObject({ auto_approve: true });
     expect(String(fetchMock.mock.calls[1][0])).toContain("/lineup/move");
   });
@@ -158,7 +163,9 @@ describe("Chat subs", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(
       <QueryClientProvider client={client}>
-        <Chat leagueId="league-1" aiEnabled />
+        <ToastProvider>
+          <Chat leagueId="league-1" aiEnabled />
+        </ToastProvider>
       </QueryClientProvider>,
     );
 
@@ -169,7 +176,7 @@ describe("Chat subs", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByTestId("claim-approve"));
-    expect(await screen.findByTestId("claim-result")).toHaveTextContent("Dropped Bench Receiver. Free Agent is on your bench.");
+    expect(await screen.findByTestId("toast")).toHaveTextContent("Dropped Bench Receiver. Free Agent is on your bench.");
     const move = fetchMock.mock.calls[1];
     expect(String(move[0])).toContain("/api/leagues/league-1/roster/add");
     expect(JSON.parse(String(move[1].body))).toEqual({ player_id: "free-1", drop_player_id: "bench-1" });
@@ -196,7 +203,9 @@ describe("Chat subs", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(
       <QueryClientProvider client={client}>
-        <Chat leagueId="league-1" aiEnabled />
+        <ToastProvider>
+          <Chat leagueId="league-1" aiEnabled />
+        </ToastProvider>
       </QueryClientProvider>,
     );
 

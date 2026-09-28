@@ -50,7 +50,7 @@ export function MatchupCompare({
           {rows.map((row, index) => {
             const onNow = [row.slot, row.other].some((side) => gameForTeam(side?.player?.nfl_team, games)?.state === "in");
             return (
-            <tr key={`${row.slot.slot}-${row.slot.player?.id ?? index}`} data-testid="matchup-row" className={cn(onNow && "bg-red-500/10")} data-live={onNow ? "true" : "false"}>
+            <tr key={`${row.slot.slot}-${row.slot.player?.id ?? index}`} data-testid="matchup-row" className={starterWash(row.slot, row.other, onNow)} data-live={onNow ? "true" : "false"}>
               <td className="px-4 py-3"><SlotBadge slot={row.slot.slot} /></td>
               <td className="px-4 py-3">
                 <PlayerCell slot={row.slot} score={row.left} week={week} games={games} current={current} leading={row.edge != null && row.edge > 0} call={row.call} />
@@ -152,4 +152,12 @@ function PlayerCell({
       </span>
     </div>
   );
+}
+
+function starterWash(slot: RosterSlot, other: RosterSlot | null, playing: boolean) {
+  const flags = [...(slot.flags ?? []), ...(other?.flags ?? [])];
+  if (flags.some((flag) => flag === "OUT" || flag === "IR" || flag === "SUSPENDED" || flag === "DOUBTFUL")) return "bg-red-500/10";
+  if (playing) return "bg-amber-400/10";
+  if (flags.includes("BYE")) return "bg-slate-500/10";
+  return "";
 }

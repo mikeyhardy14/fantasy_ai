@@ -21,17 +21,17 @@ export function LeagueRosterBoard({ teams, week }: { teams: Team[]; week: number
               description={`${team.team.record}${team.team.owner_name ? ` · ${team.team.owner_name}` : ""} · Proj ${formatPoints(team.projected_points)}`}
               action={yours ? <span className="text-[11px] font-medium uppercase tracking-wide text-emerald-200">You</span> : null}
             />
-            <RosterTable slots={team.starters} week={week} compact showPoints={false} />
+            <RosterTable slots={team.starters} week={week} compact />
             {team.bench.length ? (
               <div className="border-t border-surface-border">
                 <p className="px-5 pt-3 text-[11px] uppercase tracking-wide text-slate-500">Bench</p>
-                <RosterTable slots={team.bench} week={week} compact showPoints={false} showProjection={false} />
+                <RosterTable slots={team.bench} week={week} compact />
               </div>
             ) : null}
             {team.reserve.length ? (
               <div className="border-t border-surface-border">
                 <p className="px-5 pt-3 text-[11px] uppercase tracking-wide text-slate-500">IR</p>
-                <RosterTable slots={team.reserve} week={week} compact showPoints={false} showProjection={false} />
+                <RosterTable slots={team.reserve} week={week} compact />
               </div>
             ) : null}
           </Card>

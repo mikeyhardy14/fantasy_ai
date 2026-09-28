@@ -6,6 +6,11 @@ import type {
   League,
   LeagueDetail,
   LeagueMatchup,
+  LineupManagement,
+  AutoReply,
+  DirectChat,
+  DirectSend,
+  LeagueMessage,
   Matchup,
   Player,
   PlayerSheet,
@@ -17,10 +22,13 @@ import type {
   LineupUpdate,
   Team,
   TeamAnalysisResponse,
+  TeamCompare,
   TokenResponse,
   TradeAnalysisResponse,
   TradeReview,
   ProposeTradeResult,
+  RespondTradeResult,
+  SuggestedTrade,
   Transaction,
   WaiverSuggestions,
   User,
@@ -152,13 +160,31 @@ export const api = {
       request<PlayerSheet>(`/api/leagues/${id}/players/${playerId}${qs({ week })}`),
     rankings: (
       id: string,
-      params: { week?: number; position?: string; q?: string; team?: string; scope?: string } = {},
+      params: { week?: number; position?: string; q?: string; team?: string; scope?: string; lens?: string } = {},
     ) => request<Rankings>(`/api/leagues/${id}/rankings${qs(params)}`),
     standings: (id: string) => request<StandingsRow[]>(`/api/leagues/${id}/standings`),
+    messages: (id: string) => request<LeagueMessage[]>(`/api/leagues/${id}/messages`),
+    autoReply: (id: string) => request<AutoReply>(`/api/leagues/${id}/auto-reply`),
+    saveAutoReply: (id: string, body: { enabled: boolean; user_ids: string[]; notes?: Record<string, string> }) =>
+      request<AutoReply>(`/api/leagues/${id}/auto-reply`, { method: "PUT", body: JSON.stringify(body) }),
+    management: (id: string) => request<LineupManagement>(`/api/leagues/${id}/management`),
+    saveManagement: (id: string, enabled: boolean) =>
+      request<LineupManagement>(`/api/leagues/${id}/management`, { method: "PUT", body: JSON.stringify({ enabled }) }),
+    direct: (id: string) => request<DirectChat[]>(`/api/leagues/${id}/direct`),
+    directMessages: (id: string, threadId: string) => request<LeagueMessage[]>(`/api/leagues/${id}/direct/${threadId}`),
+    sendDirect: (id: string, threadId: string, text: string) =>
+      request<DirectSend>(`/api/leagues/${id}/direct/${threadId}`, { method: "POST", body: JSON.stringify({ text }) }),
+    startDirect: (id: string, userId: string, text: string) =>
+      request<DirectSend>(`/api/leagues/${id}/direct`, { method: "POST", body: JSON.stringify({ text, user_id: userId }) }),
     transactions: (id: string, limit = 25) => request<Transaction[]>(`/api/leagues/${id}/transactions${qs({ limit })}`),
     trades: (id: string) => request<Transaction[]>(`/api/leagues/${id}/trades`),
     proposeTrade: (id: string, body: { give: string[]; receive: string[] }) =>
       request<ProposeTradeResult>(`/api/leagues/${id}/trades`, { method: "POST", body: JSON.stringify(body) }),
+    respondTrade: (id: string, transactionId: string, action: "accept" | "decline") =>
+      request<RespondTradeResult>(`/api/leagues/${id}/trades/${transactionId}/respond`, {
+        method: "POST",
+        body: JSON.stringify({ action }),
+      }),
     needs: (id: string) => request<RosterNeeds>(`/api/leagues/${id}/needs`),
     recommendations: (id: string) => request<Recommendation[]>(`/api/leagues/${id}/recommendations`),
     briefing: (id: string) => request<WeeklyBriefing>(`/api/leagues/${id}/briefing`),
@@ -188,6 +214,8 @@ export const api = {
   ai: {
     analyze: (leagueId: string) => request<TeamAnalysisResponse>(`/api/leagues/${leagueId}/ai/analyze`, { method: "POST" }),
     waivers: (leagueId: string) => request<WaiverSuggestions>(`/api/leagues/${leagueId}/ai/waivers`, { method: "POST" }),
+    compareTeams: (leagueId: string, body: { team_ids: string[]; week?: number }) =>
+      request<TeamCompare>(`/api/leagues/${leagueId}/ai/compare`, { method: "POST", body: JSON.stringify(body) }),
     chat: (leagueId: string, messages: ChatMessage[], autoApprove = false) =>
       request<ChatResponse>(`/api/leagues/${leagueId}/ai/chat`, {
         method: "POST",
@@ -195,6 +223,11 @@ export const api = {
       }),
     trade: (leagueId: string, body: { give: string[]; receive: string[] }) =>
       request<TradeAnalysisResponse>(`/api/leagues/${leagueId}/ai/trade`, { method: "POST", body: JSON.stringify(body) }),
+    suggestTrade: (leagueId: string, playerId: string) =>
+      request<SuggestedTrade>(`/api/leagues/${leagueId}/ai/trade/for`, {
+        method: "POST",
+        body: JSON.stringify({ player_id: playerId }),
+      }),
     reviewTrade: (leagueId: string, transactionId: string) =>
       request<TradeReview>(`/api/leagues/${leagueId}/ai/trade/review`, {
         method: "POST",

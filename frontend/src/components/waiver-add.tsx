@@ -3,7 +3,7 @@
 import { PlayerFace } from "@/components/player-face";
 import { PositionBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { Player, RosterSlot, Team } from "@/lib/types";
+import type { RosterSlot, Team } from "@/lib/types";
 import { formatPoints } from "@/lib/utils";
 import { useEffect } from "react";
 
@@ -35,7 +35,7 @@ export function WaiverAddDialog({
   onKeep,
   onCancel,
 }: {
-  player: Player;
+  player: { name: string };
   roster: RosterSlot[];
   dropRequired: boolean;
   pending: boolean;
@@ -65,7 +65,7 @@ export function WaiverAddDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="waiver-add-title"
-        className="sheet-enter relative z-10 flex max-h-[85vh] w-full max-w-lg flex-col border border-surface-border bg-surface-raised shadow-card"
+        className="sheet-enter relative z-10 flex max-h-[85vh] w-full max-w-lg flex-col rounded-lg border border-surface-border bg-surface-raised shadow-card"
       >
         <div className="border-b border-surface-border px-5 py-4">
           <h2 id="waiver-add-title" className="font-serif text-xl text-slate-100">

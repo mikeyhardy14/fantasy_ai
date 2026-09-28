@@ -1,5 +1,6 @@
 "use client";
 
+import { PlayerGameLine } from "@/components/player-game";
 import { opponentLabel, PlayerFace } from "@/components/player-face";
 import { PlayerName } from "@/components/player-sheet";
 import { PositionBadge, SlotBadge } from "@/components/ui/badge";
@@ -77,6 +78,8 @@ export function LineupBoard({
   notice,
   onMove,
   projection = false,
+  quick = false,
+  showGame = false,
 }: {
   team: Team;
   irCapacity: number;
@@ -85,6 +88,8 @@ export function LineupBoard({
   notice: string | null;
   onMove: (move: { playerId: string; destination: RosterDestination; slotIndex?: number }) => void;
   projection?: boolean;
+  quick?: boolean;
+  showGame?: boolean;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
@@ -110,7 +115,7 @@ export function LineupBoard({
             <li
               key={key}
               data-testid="lineup-slot"
-              className={cn("px-4 py-2", over === key && "bg-brand-soft/40")}
+              className={cn("px-4 py-2 transition-colors hover:bg-surface-overlay/50", over === key && "bg-brand-soft/40")}
               onDragOver={(event) => {
                 event.preventDefault();
                 setOver(key);
@@ -134,6 +139,8 @@ export function LineupBoard({
                   setOpenId(openId === id ? null : id);
                 }}
                 onDragStart={(event) => filled?.player && startDrag(event, filled.player.id)}
+                quick={quick}
+                showGame={showGame}
                 menu={
                   <MoveMenu
                     playerId={filled?.player?.id ?? ""}
@@ -146,6 +153,7 @@ export function LineupBoard({
                     irCount={irCount}
                     onMove={onMove}
                     onClose={() => setOpenId(null)}
+                    inline={quick}
                   />
                 }
               />
@@ -176,7 +184,7 @@ export function LineupBoard({
             const benchPlayer = row.player;
             if (!benchPlayer) return null;
             return (
-              <li key={benchPlayer.id} className="px-4 py-2">
+              <li key={benchPlayer.id} className="px-4 py-2 transition-colors hover:bg-surface-overlay/50">
                 <PlayerRow
                   slotLabel="BN"
                   row={row}
@@ -184,6 +192,8 @@ export function LineupBoard({
                   open={openId === benchPlayer.id}
                   onToggle={() => setOpenId(openId === benchPlayer.id ? null : benchPlayer.id)}
                   onDragStart={(event) => startDrag(event, benchPlayer.id)}
+                  quick={quick}
+                  showGame={showGame}
                   menu={
                     <MoveMenu
                       playerId={benchPlayer.id}
@@ -194,6 +204,7 @@ export function LineupBoard({
                       irCount={irCount}
                       onMove={onMove}
                       onClose={() => setOpenId(null)}
+                      inline={quick}
                     />
                   }
                 />
@@ -228,11 +239,13 @@ export function LineupBoard({
           {team.reserve
             .filter((row) => row.slot === "IR" && row.player)
             .map((row) => (
-              <li key={row.player!.id} className="px-4 py-2">
+              <li key={row.player!.id} className="px-4 py-2 transition-colors hover:bg-surface-overlay/50">
                 <PlayerRow
                   slotLabel="IR"
                   row={row}
                   projection={projection}
+                  quick={quick}
+                  showGame={showGame}
                   open={openId === row.player!.id}
                   onToggle={() => setOpenId(openId === row.player!.id ? null : row.player!.id)}
                   onDragStart={(event) => startDrag(event, row.player!.id)}
@@ -246,6 +259,7 @@ export function LineupBoard({
                       irCount={irCount}
                       onMove={onMove}
                       onClose={() => setOpenId(null)}
+                      inline={quick}
                     />
                   }
                 />
@@ -278,6 +292,8 @@ function PlayerRow({
   onToggle,
   onDragStart,
   menu,
+  quick = false,
+  showGame = false,
 }: {
   slotLabel: string;
   row: RosterSlot | null;
@@ -287,32 +303,49 @@ function PlayerRow({
   onToggle: () => void;
   onDragStart: (event: DragEvent) => void;
   menu: ReactNode;
+  quick?: boolean;
+  showGame?: boolean;
 }) {
   const player = row?.player;
   return (
+    <div>
     <div className="flex items-center gap-2">
       <div className="relative">
-        <button
-          type="button"
-          className="rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand"
-          aria-label={player ? `Move ${player.name}` : `Fill ${slotLabel}`}
-          aria-expanded={open}
-          onClick={onToggle}
-          disabled={false}
-        >
+        {quick ? (
           <SlotBadge slot={slotLabel} />
-        </button>
-        {open ? menu : null}
+        ) : (
+          <button
+            type="button"
+            className="rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand"
+            aria-label={player ? `Move ${player.name}` : `Fill ${slotLabel}`}
+            aria-expanded={open}
+            onClick={onToggle}
+          >
+            <SlotBadge slot={slotLabel} />
+          </button>
+        )}
+        {open && !quick ? menu : null}
       </div>
       {player ? (
         <>
           <PlayerFace url={player.headshot_url} name={player.name} size="sm" />
-          <span draggable onDragStart={onDragStart} className="min-w-0 flex-1 cursor-grab truncate text-sm text-slate-100">
+          <span draggable onDragStart={onDragStart} className={cn("min-w-0 flex-1 cursor-grab text-sm text-slate-100", !showGame && "truncate")}>
             <PlayerName id={player.id} name={player.name} className="font-medium" />
-            <span className="ml-2 text-[11px] text-slate-500">
-              {player.nfl_team ?? "FA"}
-              {opponentLabel(player) ? ` · ${opponentLabel(player)}` : ""}
-            </span>
+            {showGame ? (
+              <>
+                <span className="mt-0.5 block truncate text-[11px] text-slate-500">
+                  {player.nfl_team ?? "FA"}
+                  {opponentLabel(player) ? ` · ${opponentLabel(player)}` : ""}
+                  {` · Proj ${formatPoints(player.projected_points)}`}
+                </span>
+                <PlayerGameLine game={row?.game} />
+              </>
+            ) : (
+              <span className="ml-2 text-[11px] text-slate-500">
+                {player.nfl_team ?? "FA"}
+                {opponentLabel(player) ? ` · ${opponentLabel(player)}` : ""}
+              </span>
+            )}
           </span>
           <span
             className="w-10 text-right text-[10px] uppercase tracking-wide text-slate-500"
@@ -324,10 +357,36 @@ function PlayerRow({
             {projection ? "proj" : "total"}
           </span>
           {points !== undefined ? <span className="w-10 text-right text-xs tabular-nums text-slate-300">{formatPoints(points)}</span> : null}
+          {quick && player ? (
+            <button
+              type="button"
+              data-testid="quick-swap"
+              className="border border-surface-border px-2 py-1 text-xs text-slate-100 hover:border-brand"
+              aria-expanded={open}
+              onClick={onToggle}
+            >
+              {open ? "Close" : "Swap"}
+            </button>
+          ) : null}
         </>
       ) : (
-        <span className="text-xs text-slate-500">Empty · drop a player here</span>
+        <>
+          <span className="flex-1 text-xs text-slate-500">Empty · drop a player here</span>
+          {quick ? (
+            <button
+              type="button"
+              data-testid="quick-swap"
+              className="border border-surface-border px-2 py-1 text-xs text-slate-100 hover:border-brand"
+              aria-expanded={open}
+              onClick={onToggle}
+            >
+              {open ? "Close" : "Fill"}
+            </button>
+          ) : null}
+        </>
       )}
+    </div>
+    {open && quick ? menu : null}
     </div>
   );
 }
@@ -343,6 +402,7 @@ function MoveMenu({
   irCount,
   onMove,
   onClose,
+  inline = false,
 }: {
   playerId: string;
   here: RosterDestination;
@@ -354,6 +414,7 @@ function MoveMenu({
   irCount: number;
   onMove: (move: { playerId: string; destination: RosterDestination; slotIndex?: number }) => void;
   onClose: () => void;
+  inline?: boolean;
 }) {
   const player = [...team.starters, ...team.bench, ...team.reserve].find((row) => row.player?.id === playerId)?.player;
   const choices: {
@@ -417,8 +478,8 @@ function MoveMenu({
 
   return (
     <>
-      <button type="button" className="fixed inset-0 z-10 cursor-default" aria-label="Close move menu" onClick={onClose} />
-      <div role="menu" className="menu-enter absolute left-0 top-full z-20 mt-1 min-w-[16rem] border border-surface-border bg-surface-raised py-1 shadow-card">
+      {inline ? null : <button type="button" className="fixed inset-0 z-10 cursor-default" aria-label="Close move menu" onClick={onClose} />}
+      <div role="menu" className={inline ? "mt-2 grid gap-1 sm:grid-cols-2" : "menu-enter absolute left-0 top-full z-20 mt-1 min-w-[16rem] border border-surface-border bg-surface-raised py-1 shadow-card"}>
         {player ? (
           <div className="flex items-center gap-2 border-b border-surface-border px-3 py-2" data-testid="sub-player">
             <PositionBadge position={player.position} />

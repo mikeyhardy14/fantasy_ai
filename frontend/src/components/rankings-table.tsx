@@ -1,5 +1,6 @@
 import { eligibleForSlot } from "@/components/lineup-board";
 import { PlayerFace } from "@/components/player-face";
+import { PlayerGameLine } from "@/components/player-game";
 import { PlayerName } from "@/components/player-sheet";
 import { PositionBadge } from "@/components/ui/badge";
 import type { RankingRow, Rankings, RosterSlot, Team } from "@/lib/types";
@@ -29,11 +30,6 @@ function signed(value: number): string {
   return value > 0 ? `+${text}` : text;
 }
 
-function formatWin(value: number | null): string {
-  if (value == null) return "—";
-  return `${Math.round(value * 100)}%`;
-}
-
 function formatValue(value: number | null): string {
   if (value == null) return "—";
   const text = value.toFixed(1);
@@ -46,6 +42,7 @@ export function RankingsTable({
   pending,
   onMove,
   onAdd,
+  onTrade,
   emptyTitle = "No rankings",
   emptyDescription = "No projected players are available for this week.",
 }: {
@@ -54,6 +51,7 @@ export function RankingsTable({
   pending?: boolean;
   onMove?: (move: RankMove) => void;
   onAdd?: (playerId: string) => void;
+  onTrade?: (playerId: string, side: "give" | "receive") => void;
   emptyTitle?: string;
   emptyDescription?: string;
 }) {
@@ -71,11 +69,10 @@ export function RankingsTable({
             <th className="px-2 py-2 font-medium">Player</th>
             <th className="px-2 py-2 font-medium">Opp</th>
             <th className="px-2 py-2 text-right font-medium">Implied</th>
-            <th className="px-2 py-2 text-right font-medium">Win</th>
             <th className="px-2 py-2 text-right font-medium">Proj</th>
             <th className="px-2 py-2 text-right font-medium" title="Points scored this season">Pts</th>
             <th className="px-5 py-2 text-right font-medium">Value</th>
-            {onMove || onAdd ? <th className="px-5 py-2 font-medium">Move</th> : null}
+            {onMove || onAdd || onTrade ? <th className="px-5 py-2 font-medium">Move</th> : null}
           </tr>
         </thead>
         <tbody className="divide-y divide-surface-border/60">
@@ -87,10 +84,11 @@ export function RankingsTable({
             const free = row.owned === null && !mine;
             const choices = roster && mine && onMove ? subChoices(roster, mine) : [];
             const open = openId === row.player_id;
-            const columns = onMove || onAdd ? 9 : 8;
+            const actions = Boolean(onMove || onAdd || onTrade);
+            const columns = actions ? 8 : 7;
             return (
               <Fragment key={row.player_id}>
-              <tr className={cn(yours && "bg-emerald-500/15")} data-owned={yours ? "you" : row.owned === "league" ? "league" : "none"}>
+              <tr className={cn("transition-colors hover:bg-surface-overlay/50", yours && "bg-emerald-500/15")} data-owned={yours ? "you" : row.owned === "league" ? "league" : "none"}>
                 <td className="px-5 py-2.5 tabular-nums text-slate-400">{row.rank}</td>
                 <td className="px-2 py-2.5">
                   <div className="flex items-center gap-2">
@@ -102,6 +100,7 @@ export function RankingsTable({
                         {yours ? <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-200">Yours</span> : null}
                       </div>
                       <p className="text-[11px] text-slate-500">{row.nfl_team ?? "FA"}</p>
+                      <PlayerGameLine game={row.game} />
                     </div>
                   </div>
                 </td>
@@ -112,12 +111,12 @@ export function RankingsTable({
                   <div className="tabular-nums text-slate-100">{formatPoints(row.implied_points)}</div>
                   {line ? <div className="text-[11px] text-slate-500">{line}</div> : null}
                 </td>
-                <td className="px-2 py-2.5 text-right tabular-nums text-slate-300">{formatWin(row.win_probability)}</td>
                 <td className="px-2 py-2.5 text-right tabular-nums text-slate-100">{formatPoints(row.projected_points)}</td>
                 <td className="px-2 py-2.5 text-right tabular-nums text-slate-200" title="Points scored this season">{formatPoints(row.season_points)}</td>
                 <td className="px-5 py-2.5 text-right tabular-nums text-slate-100">{formatValue(row.vorp)}</td>
-                {onMove || onAdd ? (
+                {actions ? (
                   <td className="px-5 py-2.5">
+                    <div className="flex flex-wrap justify-end gap-1">
                     {free && onAdd ? (
                       <button
                         type="button"
@@ -127,6 +126,17 @@ export function RankingsTable({
                         className="border border-surface-border px-2 py-1 text-xs text-slate-100 hover:border-brand disabled:opacity-50"
                       >
                         Add
+                      </button>
+                    ) : null}
+                    {onTrade && (yours || row.owned === "league") ? (
+                      <button
+                        type="button"
+                        data-testid="rank-trade"
+                        disabled={pending}
+                        onClick={() => onTrade(row.player_id, yours ? "give" : "receive")}
+                        className="border border-surface-border px-2 py-1 text-xs text-slate-100 hover:border-brand disabled:opacity-50"
+                      >
+                        Trade
                       </button>
                     ) : null}
                     {choices.length ? (
@@ -141,6 +151,7 @@ export function RankingsTable({
                         {open ? "Close" : "Sub"}
                       </button>
                     ) : null}
+                    </div>
                   </td>
                 ) : null}
               </tr>

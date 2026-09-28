@@ -1,7 +1,8 @@
+import asyncio
 import time
 import uuid
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import structlog
 from fastapi import FastAPI, Request
@@ -14,6 +15,8 @@ from app.api.router import api_router
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError
 from app.core.logging import configure_logging, get_logger
+from app.services.auto_reply import auto_reply_loop, ensure_auto_reply_tables
+from app.services.lineup_management import ensure_lineup_management_table
 
 log = get_logger(__name__)
 
@@ -32,7 +35,18 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
             ai_enabled=container.llm is not None,
             database=settings.database_url.split("@")[-1],
         )
+        stop_auto = asyncio.Event()
+        watcher = None
+        if settings.environment != "test":
+            await ensure_auto_reply_tables(container.db)
+            await ensure_lineup_management_table(container.db)
+            watcher = asyncio.create_task(auto_reply_loop(container, stop_auto))
         yield
+        stop_auto.set()
+        if watcher is not None:
+            watcher.cancel()
+            with suppress(asyncio.CancelledError):
+                await watcher
         await container.db.dispose()
         log.info("app.shutdown")
 

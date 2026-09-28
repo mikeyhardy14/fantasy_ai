@@ -1,6 +1,9 @@
 "use client";
 
 import { AnalysisCards } from "@/components/analysis-cards";
+import { UpdatedAgo } from "@/components/live-points";
+import { WeekMatchup } from "@/components/week-matchup";
+import { useToast } from "@/components/toast";
 import { BriefingCard } from "@/components/briefing-card";
 import { NoLeague } from "@/components/no-league";
 import { PageHeader } from "@/components/page-header";
@@ -14,7 +17,7 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { EmptyState, ErrorState, Skeleton, SkeletonRows } from "@/components/ui/states";
 import { api } from "@/lib/api";
 import { useLeague } from "@/lib/league";
-import { keys, useLeagueDetail, useMatchup, useRecommendations, useStandings, useTeam, useTransactions, useBriefing } from "@/lib/queries";
+import { keys, useLeagueDetail, useRecommendations, useStandings, useTeam, useTransactions, useBriefing } from "@/lib/queries";
 import type { RosterSlot } from "@/lib/types";
 import { cn, formatPoints, slotNeedsAttention } from "@/lib/utils";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -32,10 +35,10 @@ function Dashboard({ leagueId }: { leagueId: string }) {
   const { selected } = useLeague();
   const team = useTeam(leagueId);
   const detail = useLeagueDetail(leagueId);
-  const matchup = useMatchup(leagueId);
   const recs = useRecommendations(leagueId);
   const standings = useStandings(leagueId);
   const txs = useTransactions(leagueId);
+  const toast = useToast();
   const [briefingRequested, setBriefingRequested] = useState(false);
   const briefing = useBriefing(leagueId, briefingRequested);
   const analyze = useMutation({ mutationFn: () => api.ai.analyze(leagueId) });
@@ -56,7 +59,8 @@ function Dashboard({ leagueId }: { leagueId: string }) {
       }),
     onSuccess: async (result) => {
       qc.setQueryData(keys.team(leagueId), result.team);
-      setLineupNotice(result.message);
+      setLineupNotice(null);
+      toast(result.message);
       await qc.invalidateQueries({ queryKey: ["league", leagueId] });
     },
     onError: async (error) => {
@@ -83,6 +87,7 @@ function Dashboard({ leagueId }: { leagueId: string }) {
             Analyze My Team
           </Button>
         }
+        note={team.isFetched ? <UpdatedAgo at={team.dataUpdatedAt} /> : null}
       />
 
       <div className="grid grid-cols-2 gap-x-8 gap-y-5 border-b border-surface-border pb-6 lg:grid-cols-4">
@@ -113,30 +118,7 @@ function Dashboard({ leagueId }: { leagueId: string }) {
 
       <div className="grid gap-6 xl:grid-cols-3">
         <div className="space-y-6 xl:col-span-2">
-          {/* Matchup */}
-          <Card>
-            <CardHeader title={`Week ${selected?.current_week} matchup`} action={<Link href="/matchup" className="text-xs text-brand hover:underline">Full matchup</Link>} />
-            <CardBody>
-              {matchup.isLoading ? (
-                <Skeleton className="h-16 w-full" />
-              ) : matchup.error ? (
-                <ErrorState error={matchup.error} onRetry={() => matchup.refetch()} className="py-4" />
-              ) : !matchup.data ? (
-                <EmptyState title="No matchup this week" className="py-6" />
-              ) : matchup.data.is_bye ? (
-                <EmptyState title="Bye week" description="Your team does not play this week." className="py-6" />
-              ) : (
-                <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4">
-                  <MatchupTeam name={matchup.data.user.team.name} record={matchup.data.user.team.record} points={matchup.data.user.points} projected={matchup.data.user.projected_points} align="left" highlight />
-                  <div className="text-center">
-                    <p className="text-[11px] uppercase tracking-wide text-slate-500">{matchup.data.status.replace("_", " ")}</p>
-                    <p className="text-lg font-semibold text-slate-500">vs</p>
-                  </div>
-                  <MatchupTeam name={matchup.data.opponent!.team.name} record={matchup.data.opponent!.team.record} points={matchup.data.opponent!.points} projected={matchup.data.opponent!.projected_points} align="right" />
-                </div>
-              )}
-            </CardBody>
-          </Card>
+          <WeekMatchup leagueId={leagueId} currentWeek={selected?.current_week ?? team.data?.week ?? 1} />
 
           {/* Lineup */}
           <Card>
@@ -232,7 +214,7 @@ function Dashboard({ leagueId }: { leagueId: string }) {
               ) : (
                 <ul className="divide-y divide-surface-border/60">
                   {standings.data?.map((row) => (
-                    <li key={row.id} className={cn("flex items-center justify-between px-5 py-2 text-sm", row.is_user_team && "bg-brand-soft/20")}>
+                    <li key={row.id} className={cn("flex items-center justify-between px-5 py-2 text-sm transition-colors hover:bg-surface-overlay/50", row.is_user_team && "bg-brand-soft/20")}>
                       <span className="flex items-center gap-3 min-w-0">
                         <span className="w-4 text-right text-xs text-slate-500">{row.rank}</span>
                         <Link href={row.is_user_team ? "/team" : `/teams/${row.id}`} className={cn("truncate hover:underline", row.is_user_team ? "font-medium text-emerald-200" : "text-slate-200")}>{row.name}</Link>
@@ -263,17 +245,6 @@ function StatCard({ label, value, sub, loading }: { label: string; value?: strin
       <p className="text-[11px] uppercase tracking-wide text-slate-500">{label}</p>
       {loading ? <Skeleton className="mt-2 h-8 w-20" /> : <p className="mt-1 font-serif text-3xl tabular-nums text-slate-100">{value ?? "—"}</p>}
       {sub ? <p className="mt-1 text-xs text-slate-500">{sub}</p> : null}
-    </div>
-  );
-}
-
-function MatchupTeam({ name, record, points, projected, align, highlight }: { name: string; record: string; points: number; projected: number | null; align: "left" | "right"; highlight?: boolean }) {
-  return (
-    <div className={cn(align === "right" ? "text-right" : "text-left", "min-w-0")}>
-      <p className={cn("truncate text-sm font-semibold", highlight ? "text-emerald-200" : "text-slate-100")}>{name}</p>
-      <p className="text-xs text-slate-500">{record}</p>
-      <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-100">{formatPoints(points)}</p>
-      <p className="text-xs text-slate-500">Proj {formatPoints(projected)}</p>
     </div>
   );
 }

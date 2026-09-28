@@ -23,7 +23,7 @@ from app.nfl_data import NFLDataProvider, PlayerProjection, player_key
 from app.nfl_data.headshot import headshot_url
 from app.nfl_data.live import depth_for_player
 from app.nfl_data.props import EspnPropClient, prop_components
-from app.nfl_data.rankings import RankCandidate, build_rankings, ruled_out
+from app.nfl_data.rankings import RankCandidate, build_rankings, opportunity_ids, ruled_out
 from app.nfl_data.sleeper_stats import (
     SleeperProjections,
     SleeperWeeklyStats,
@@ -41,7 +41,9 @@ from app.repositories import (
     TeamRepository,
     TransactionRepository,
 )
+from app.services.game_look import game_look
 from app.schemas.league import (
+    GameLookOut,
     LeagueDetailOut,
     LeagueMatchupOut,
     LeagueOut,
@@ -50,6 +52,7 @@ from app.schemas.league import (
     NflGameOut,
     PlayerOut,
     PlayerSheetOut,
+    RosteredOnOut,
     PropLineOut,
     RankingRowOut,
     RankingsOut,
@@ -334,17 +337,43 @@ class LeagueContextService:
             external_ids={e.provider: e.external_id for e in player.external_ids},
         )
 
+    async def rostered_on(self, league: League, player_id: UUID, week: int | None = None) -> RosteredOnOut | None:
+        week = week or league.current_week
+        entry = await self.rosters.find_player(league.id, player_id, week)
+        if entry is None and week != league.current_week:
+            entry = await self.rosters.find_player(league.id, player_id, league.current_week)
+        if entry is None:
+            return None
+        user = await self.user_team(league)
+        team = entry.team
+        return RosteredOnOut(
+            team_id=team.id,
+            team_name=team.name,
+            owner_name=team.owner_name,
+            is_user_team=bool(user and team.id == user.id),
+        )
+
     async def player_sheet(self, league: League, player_id: UUID, week: int | None = None) -> PlayerSheetOut:
         week = week or league.current_week
         player = await self.get_player_in_league(league, player_id, week)
+        owner = await self.rostered_on(league, player_id, week)
         sleeper_id = player.external_ids.get("sleeper")
         if not sleeper_id:
+            look = await self._player_game(league, week, player)
             return PlayerSheetOut(
                 player=player,
+                rostered_on=owner,
                 games_note="Recent games come from Sleeper's weekly stat lines, and this player has no Sleeper id.",
+                game=look,
             )
         if self.weekly_stats is None:
-            return PlayerSheetOut(player=player, games_note="Recent game stats are not loaded in this environment.")
+            look = await self._player_game(league, week, player)
+            return PlayerSheetOut(
+                player=player,
+                rostered_on=owner,
+                games_note="Recent game stats are not loaded in this environment.",
+                game=look,
+            )
         opponents = {game.week: (game.opponent, game.home) for game in player.schedule}
         try:
             games = await self.weekly_stats.recent(
@@ -356,9 +385,11 @@ class LeagueContextService:
             )
         except Exception as exc:
             log.warning("player.recent_games_failed", error=str(exc))
-            return PlayerSheetOut(player=player, games_note="Recent stats could not be loaded.")
+            look = await self._player_game(league, week, player)
+            return PlayerSheetOut(player=player, rostered_on=owner, games_note="Recent stats could not be loaded.", game=look)
         note = None if games else "No stat lines yet for the weeks already played."
-        return PlayerSheetOut(player=player, recent_games=games, games_note=note)
+        look = await self._player_game(league, week, player)
+        return PlayerSheetOut(player=player, recent_games=games, games_note=note, rostered_on=owner, game=look)
 
     async def get_player_in_league(self, league: League, player_id: UUID, week: int) -> PlayerOut:
         player = await self.players.get(player_id)
@@ -488,6 +519,7 @@ class LeagueContextService:
         query: str | None = None,
         nfl_team: str | None = None,
         scope: str | None = None,
+        lens: str | None = None,
     ) -> RankingsOut:
         week = week or league.current_week
         raw = await self.players.list_active(league.provider, ("QB", "RB", "WR", "TE", "K", "DEF"))
@@ -538,6 +570,9 @@ class LeagueContextService:
         yours = {str(entry.player_id) for entry in rostered if user and entry.fantasy_team_id == user.id}
         taken = {str(entry.player_id) for entry in rostered} - yours
         only_ids, exclude_ids = await self._ranking_scope(league, week, scope)
+        if lens in {"carries", "targets"}:
+            bumped = opportunity_ids(candidates, lens)
+            only_ids = bumped if only_ids is None else only_ids & bumped
         rows, truncated = build_rankings(
             candidates,
             team_count=league.team_count,
@@ -548,6 +583,7 @@ class LeagueContextService:
             only_ids=only_ids,
             exclude_ids=exclude_ids,
         )
+        looks = await self._ranking_games(league, week, rows)
         return RankingsOut(
             week=week,
             notes=[],
@@ -574,12 +610,89 @@ class LeagueContextService:
                     projection_source=row.player.projection_source,
                     season_points=row.player.season_points,
                     vorp=row.vorp,
+                    game=looks.get(row.player.player_id),
                 )
                 for row in rows
             ],
         )
 
     # ---- teams ----------------------------------------------------------------
+
+    async def _current_board(self, league: League, week: int) -> tuple[list[NflGameOut], dict]:
+        if week != league.current_week:
+            return [], {}
+        cache: dict = getattr(self, "_board_cache", None)
+        if cache is None:
+            cache = {}
+            self._board_cache = cache
+        key = (league.season, week)
+        if key in cache:
+            return cache[key]
+        games = await self._nfl_games(league.season, week)
+        blob: dict = {}
+        if self.weekly_stats is not None:
+            try:
+                loaded = await self.weekly_stats.week(league.season, week, max_age=30)
+                blob = loaded if isinstance(loaded, dict) else {}
+            except Exception as exc:  # noqa: BLE001 - the roster still loads if stats do not
+                log.warning("game.stats_failed", error=str(exc))
+        cache[key] = (games, blob)
+        return games, blob
+
+    async def _paint_slot_games(self, league: League, week: int, slots: list[RosterSlotOut]) -> None:
+        games, blob = await self._current_board(league, week)
+        scoring = league.scoring_settings or {}
+        for slot in slots:
+            player = slot.player
+            if player is None:
+                continue
+            slot.game = game_look(
+                nfl_team=player.nfl_team,
+                opponent=player.opponent,
+                projected_points=player.projected_points,
+                points=slot.points,
+                sleeper_id=player.external_ids.get("sleeper"),
+                games=games,
+                stats=blob,
+                scoring=scoring,
+            )
+            if slot.game and slot.game.stat_line and not slot.stat_line:
+                slot.stat_line = slot.game.stat_line
+
+    async def _player_game(self, league: League, week: int, player: PlayerOut) -> GameLookOut | None:
+        games, blob = await self._current_board(league, week)
+        return game_look(
+            nfl_team=player.nfl_team,
+            opponent=player.opponent,
+            projected_points=player.projected_points,
+            points=None,
+            sleeper_id=player.external_ids.get("sleeper"),
+            games=games,
+            stats=blob,
+            scoring=league.scoring_settings or {},
+        )
+
+    async def _ranking_games(self, league: League, week: int, rows: list) -> dict[str, GameLookOut | None]:
+        if not rows:
+            return {}
+        games, blob = await self._current_board(league, week)
+        people = await self.players.get_many(UUID(row.player.player_id) for row in rows)
+        scoring = league.scoring_settings or {}
+        looks: dict[str, GameLookOut | None] = {}
+        for row in rows:
+            person = people.get(UUID(row.player.player_id))
+            sleeper = person.external_id_for(league.provider) if person else None
+            looks[row.player.player_id] = game_look(
+                nfl_team=row.player.nfl_team,
+                opponent=row.player.opponent,
+                projected_points=row.player.projected_points,
+                points=None,
+                sleeper_id=sleeper,
+                games=games,
+                stats=blob,
+                scoring=scoring,
+            )
+        return looks
 
     def team_summary(self, team: FantasyTeam, league: League) -> TeamSummaryOut:
         return TeamSummaryOut(
@@ -619,6 +732,7 @@ class LeagueContextService:
         matchup = await self.matchups.get_for_team(league.id, week, team.id)
         points = matchup.player_points if matchup else {}
         slots = [await self._slot_out(e, league, week, points) for e in entries]
+        await self._paint_slot_games(league, week, slots)
         starters = sorted([s for s in slots if s.is_starter], key=lambda s: (s.slot_index is None, s.slot_index or 0))
         bench = [s for s in slots if not s.is_starter and s.slot == "BN"]
         reserve = [s for s in slots if not s.is_starter and s.slot in ("IR", "TAXI")]

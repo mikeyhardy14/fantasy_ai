@@ -112,10 +112,35 @@ class PlayerOut(BaseModel):
     external_ids: dict[str, str] = Field(default_factory=dict)
 
 
+class RosteredOnOut(BaseModel):
+    team_id: UUID
+    team_name: str
+    owner_name: str | None = None
+    is_user_team: bool = False
+
+
+class GameLookOut(BaseModel):
+    """Projection plus the NFL game that player is in this week."""
+
+    projected_points: float | None = None
+    points: float | None = None
+    stat_line: str | None = None
+    opponent: str | None = None
+    home: bool | None = None
+    away: str | None = None
+    home_team: str | None = None
+    away_score: int | None = None
+    home_score: int | None = None
+    state: str | None = None  # pre, in, post
+    clock: str | None = None
+
+
 class PlayerSheetOut(BaseModel):
     player: PlayerOut
     recent_games: list[RecentGame] = Field(default_factory=list)
     games_note: str | None = None
+    rostered_on: RosteredOnOut | None = None
+    game: GameLookOut | None = None
 
 
 class RosterSlotOut(BaseModel):
@@ -125,6 +150,7 @@ class RosterSlotOut(BaseModel):
     player: PlayerOut | None
     points: float | None = None  # actual points this week when known
     stat_line: str | None = None  # counting stats while that player's game is on
+    game: GameLookOut | None = None
     flags: list[str] = Field(default_factory=list)  # e.g. "INJURED", "BYE", "OUT"
 
 
@@ -251,6 +277,85 @@ class StandingsRowOut(TeamSummaryOut):
     streak: str | None = None
 
 
+class ChatTradePlayer(BaseModel):
+    name: str
+    position: str | None = None
+    headshot_url: str | None = None
+
+
+class ChatTradeSide(BaseModel):
+    manager: str
+    receives: list[ChatTradePlayer] = Field(default_factory=list)
+    picks: list[str] = Field(default_factory=list)
+
+
+class ChatTrade(BaseModel):
+    status: str
+    transaction_id: str | None = None
+    involves_user: bool = False
+    sides: list[ChatTradeSide]
+
+
+class RespondTradeRequest(BaseModel):
+    action: Literal["accept", "decline"]
+
+
+class RespondTradeResponse(BaseModel):
+    message: str
+    status: str
+    transaction_id: str
+
+
+class LeagueMessageOut(BaseModel):
+    id: str
+    author_name: str
+    text: str
+    created_at: datetime
+    pinned: bool = False
+    mine: bool = False
+    trade: ChatTrade | None = None
+
+
+class AutoReplyOut(BaseModel):
+    enabled: bool
+    user_ids: list[str]
+    notes: dict[str, str] = Field(default_factory=dict)
+    available: bool
+
+
+class AutoReplyUpdate(BaseModel):
+    enabled: bool
+    user_ids: list[str] = Field(default_factory=list, max_length=30)
+    notes: dict[str, str] = Field(default_factory=dict)
+
+
+class LineupManagementOut(BaseModel):
+    enabled: bool
+    available: bool
+
+
+class LineupManagementUpdate(BaseModel):
+    enabled: bool
+
+
+class DirectChatOut(BaseModel):
+    user_id: str
+    name: str
+    team_name: str
+    thread_id: str | None = None
+    last_message_at: datetime | None = None
+
+
+class SendDirectRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+    user_id: str | None = None
+
+
+class DirectSendOut(BaseModel):
+    thread_id: str
+    messages: list[LeagueMessageOut]
+
+
 class TransactionOut(BaseModel):
     id: UUID
     type: str
@@ -311,6 +416,7 @@ class RankingRowOut(BaseModel):
     season_points: float | None = None
     vorp: float | None = None
     owned: Literal["you", "league"] | None = None
+    game: GameLookOut | None = None
 
 
 class RankingsOut(BaseModel):

@@ -1,6 +1,8 @@
 "use client";
 
+import { OutstandingTrades } from "@/components/outstanding-trades";
 import { ProposeTradeDialog } from "@/components/propose-trade";
+import { useToast } from "@/components/toast";
 import { NoLeague } from "@/components/no-league";
 import { PageHeader } from "@/components/page-header";
 import { RecommendationList } from "@/components/recommendation-card";
@@ -11,12 +13,13 @@ import { Input } from "@/components/ui/input";
 import { EmptyState, ErrorState, InlineError, SkeletonRows } from "@/components/ui/states";
 import { api } from "@/lib/api";
 import { useLeague } from "@/lib/league";
-import { useLeagueDetail, usePlayers, useRecommendations, useTeam, useTrades } from "@/lib/queries";
+import { keys, useLeagueDetail, usePlayers, useRecommendations, useTeam, useTrades } from "@/lib/queries";
 import type { Player, TradeAnalysis, TradeReview, Transaction } from "@/lib/types";
 import { cn, formatPoints } from "@/lib/utils";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeftRight, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 export default function TradesPage() {
   const { selected, loading, leagues } = useLeague();
@@ -34,6 +37,8 @@ const VERDICT_STYLE: Record<TradeAnalysis["verdict"], string> = {
 
 function TradesView({ leagueId }: { leagueId: string }) {
   const { selected } = useLeague();
+  const params = useSearchParams();
+  const seeded = useRef<string | null>(null);
   const detail = useLeagueDetail(leagueId);
   const team = useTeam(leagueId);
   const recs = useRecommendations(leagueId);
@@ -42,20 +47,38 @@ function TradesView({ leagueId }: { leagueId: string }) {
   const [give, setGive] = useState<Player[]>([]);
   const [receive, setReceive] = useState<Player[]>([]);
   const [confirming, setConfirming] = useState(false);
-  const [sent, setSent] = useState<string | null>(null);
+  const toast = useToast();
+  const queryClient = useQueryClient();
   const writes = selected?.provider === "sleeper" && !!detail.data?.account.writes_enabled;
   const analyze = useMutation({ mutationFn: () => api.ai.trade(leagueId, { give: give.map((p) => p.id), receive: receive.map((p) => p.id) }) });
   const propose = useMutation({
     mutationFn: () => api.leagues.proposeTrade(leagueId, { give: give.map((player) => player.id), receive: receive.map((player) => player.id) }),
     onSuccess: (result) => {
       setConfirming(false);
-      setSent(result.message);
+      toast(result.message);
       setGive([]);
       setReceive([]);
+      queryClient.invalidateQueries({ queryKey: keys.trades(leagueId) });
     },
   });
 
   const roster = useMemo(() => [...(team.data?.starters ?? []), ...(team.data?.bench ?? []), ...(team.data?.reserve ?? [])].map((s) => s.player!).filter(Boolean), [team.data]);
+  useEffect(() => {
+    const giveId = params.get("give");
+    const receiveId = params.get("receive");
+    const key = `${giveId ?? ""}:${receiveId ?? ""}`;
+    if (!giveId && !receiveId) return;
+    if (seeded.current === key) return;
+    if (giveId && !team.data) return;
+    seeded.current = key;
+    if (giveId) {
+      const found = roster.find((player) => player.id === giveId);
+      if (found) setGive([found]);
+    }
+    if (receiveId) {
+      api.leagues.playerSheet(leagueId, receiveId).then((sheet) => setReceive([sheet.player])).catch(() => undefined);
+    }
+  }, [params, team.data, roster, leagueId]);
   const rosterIds = useMemo(() => new Set(roster.map((p) => p.id)), [roster]);
   const tradeRecs = (recs.data ?? []).filter((r) => r.type === "TRADE_TARGET" || r.type === "ROSTER_WEAKNESS");
 
@@ -64,7 +87,8 @@ function TradesView({ leagueId }: { leagueId: string }) {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Trades" description="Review trades that already went through, or send an offer. The other manager accepts it in Sleeper." />
+      <PageHeader title="Trades" description="Open offers stay here until the other manager answers them in Sleeper." />
+      <OutstandingOffers leagueId={leagueId} userTeamId={team.data?.team.id} userTeamName={team.data?.team.name} />
       <MadeTrades leagueId={leagueId} />
       <div className="grid gap-6 xl:grid-cols-3">
         <div className="space-y-6 xl:col-span-2">
@@ -109,7 +133,6 @@ function TradesView({ leagueId }: { leagueId: string }) {
                     disabled={!give.length || !receive.length}
                     onClick={() => {
                       propose.reset();
-                      setSent(null);
                       setConfirming(true);
                     }}
                   >
@@ -121,7 +144,6 @@ function TradesView({ leagueId }: { leagueId: string }) {
             {detail.data && !writes ? (
               <p className="px-5 pb-4 text-xs text-slate-500">Save a Sleeper token in Settings to send an offer.</p>
             ) : null}
-            {sent ? <p className="px-5 pb-4 text-sm text-emerald-200" data-testid="propose-result">{sent}</p> : null}
             <InlineError error={analyze.error} />
           </Card>
           {confirming ? (
@@ -150,6 +172,32 @@ function TradesView({ leagueId }: { leagueId: string }) {
   );
 }
 
+function OutstandingOffers({
+  leagueId,
+  userTeamId,
+  userTeamName,
+}: {
+  leagueId: string;
+  userTeamId?: string;
+  userTeamName?: string;
+}) {
+  const trades = useTrades(leagueId);
+  return (
+    <Card>
+      <CardHeader title="Outstanding trades" description="Offers that involve your roster and are still waiting." />
+      {trades.isLoading ? (
+        <CardBody>
+          <SkeletonRows rows={3} />
+        </CardBody>
+      ) : trades.error ? (
+        <ErrorState error={trades.error} onRetry={() => trades.refetch()} />
+      ) : (
+        <OutstandingTrades trades={trades.data ?? []} userTeamId={userTeamId} userTeamName={userTeamName} />
+      )}
+    </Card>
+  );
+}
+
 function MadeTrades({ leagueId }: { leagueId: string }) {
   const trades = useTrades(leagueId);
   const [reviews, setReviews] = useState<Record<string, TradeReview>>({});
@@ -157,7 +205,7 @@ function MadeTrades({ leagueId }: { leagueId: string }) {
     mutationFn: (id: string) => api.ai.reviewTrade(leagueId, id),
     onSuccess: (result, id) => setReviews((current) => ({ ...current, [id]: result })),
   });
-  const rows = trades.data ?? [];
+  const rows = (trades.data ?? []).filter((trade) => trade.status === "complete");
   return (
     <Card>
       <CardHeader title="Trades that were made" description="Scored from this week's projections. Asking the assistant to review trades uses the same record." />

@@ -2,6 +2,7 @@
 
 import { PlayerSheetProvider } from "@/components/player-sheet";
 import { Sidebar } from "@/components/sidebar";
+import { ToastProvider } from "@/components/toast";
 import { Skeleton } from "@/components/ui/states";
 import { useAuth } from "@/lib/auth";
 import { LeagueProvider } from "@/lib/league";
@@ -41,14 +42,16 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <LeagueProvider>
-      <PlayerSheetProvider>
-      <div className="flex min-h-screen flex-col lg:flex-row">
-        <Sidebar />
-        <main className="flex-1 min-w-0">
-          <div className="page-enter mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-10 lg:py-10">{children}</div>
-        </main>
-      </div>
-      </PlayerSheetProvider>
+      <ToastProvider>
+        <PlayerSheetProvider>
+          <div className="flex min-h-screen flex-col lg:flex-row">
+            <Sidebar />
+            <main className="flex-1 min-w-0">
+              <div className="page-enter mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-10 lg:py-10">{children}</div>
+            </main>
+          </div>
+        </PlayerSheetProvider>
+      </ToastProvider>
     </LeagueProvider>
   );
 }

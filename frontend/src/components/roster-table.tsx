@@ -1,5 +1,6 @@
 import type { RosterSlot } from "@/lib/types";
 import { cn, formatPoints, slotHasProblem } from "@/lib/utils";
+import { PlayerGameLine } from "./player-game";
 import { opponentLabel, PlayerFace, SeasonStrip } from "./player-face";
 import { PlayerName } from "./player-sheet";
 import { FlagBadges, PositionBadge, SlotBadge } from "./ui/badge";
@@ -59,7 +60,9 @@ export function RosterTable({
                         <div className="text-[11px] text-slate-500">
                           {p.nfl_team ?? "FA"}
                           {compact && opponentLabel(p, week) ? ` · ${opponentLabel(p, week)}` : ""}
+                          {` · Proj ${formatPoints(p.projected_points)}`}
                         </div>
+                        <PlayerGameLine game={s.game} />
                         {!compact ? <SeasonStrip games={p.schedule} week={week} /> : null}
                       </div>
                     </div>

@@ -33,11 +33,12 @@ export function PlayerFace({
 }: {
   url: string | null;
   name: string;
-  size?: "sm" | "md";
+  size?: "sm" | "md" | "lg";
 }) {
   const [failed, setFailed] = useState(false);
   const initial = name.replace(/[^A-Za-z]/g, "").slice(0, 1).toUpperCase() || "?";
-  const box = size === "sm" ? "h-7 w-7 text-[10px]" : "h-8 w-8 text-[11px]";
+  const box =
+    size === "lg" ? "h-24 w-24 text-2xl" : size === "md" ? "h-16 w-16 text-lg" : "h-12 w-12 text-sm";
   if (!url || failed) {
     return (
       <span

@@ -159,6 +159,31 @@ class TradeAnalysisResponse(BaseModel):
     generated_by: GeneratedBy
 
 
+class SuggestTradeRequest(BaseModel):
+    player_id: UUID
+
+
+class TradeSidePlayer(BaseModel):
+    id: UUID
+    name: str
+    position: str | None = None
+
+
+class SuggestTradeResponse(BaseModel):
+    give: list[TradeSidePlayer]
+    receive: list[TradeSidePlayer]
+    opponent_name: str
+    message: str
+    generated_by: GeneratedBy
+
+
+class TradeDraft(BaseModel):
+    """Structured choice from the model. Ids must come from the user's roster."""
+
+    give_player_ids: list[str] = Field(min_length=1, max_length=2)
+    message: str = Field(min_length=1, max_length=400)
+
+
 class TradeReviewRequest(BaseModel):
     transaction_id: UUID
 
@@ -210,3 +235,51 @@ class WaiverSuggestionsResponse(BaseModel):
     generated_by: GeneratedBy
     model: str | None = None
     tools_used: list[str] = Field(default_factory=list)
+
+
+class CompareTeamsRequest(BaseModel):
+    team_ids: list[UUID] = Field(min_length=2, max_length=2)
+    week: int | None = Field(default=None, ge=1, le=18)
+
+
+class CompareStarter(BaseModel):
+    name: str
+    slot: str
+    position: str | None = None
+    projected_points: float | None = None
+    points: float | None = None
+    injury_status: str | None = None
+    on_bye: bool = False
+
+
+class ComparePosition(BaseModel):
+    position: str
+    grade: str
+    healthy_depth: int
+    total_depth: int
+    starter_projection: float | None = None
+
+
+class CompareSide(BaseModel):
+    team_id: UUID
+    name: str
+    owner_name: str | None = None
+    is_user_team: bool = False
+    record: str
+    points_for: float
+    points_against: float
+    projected_points: float | None = None
+    faab_remaining: int | None = None
+    waiver_position: int | None = None
+    starters_out: int = 0
+    starters_on_bye: int = 0
+    positions: list[ComparePosition] = Field(default_factory=list)
+    starters: list[CompareStarter] = Field(default_factory=list)
+
+
+class CompareTeamsResponse(BaseModel):
+    week: int
+    sides: list[CompareSide]
+    summary: str
+    generated_by: GeneratedBy
+    model: str | None = None

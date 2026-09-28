@@ -63,12 +63,25 @@ function OtherTeamView({ leagueId, teamId, currentWeek }: { leagueId: string; te
           </Card>
           <Card>
             <CardHeader title="Bench" />
-            <RosterTable slots={view.bench} showPoints={false} emptyLabel="Bench is empty" week={week} />
+            <RosterTable slots={view.bench} emptyLabel="Bench is empty" week={week} />
           </Card>
           {view.reserve.length ? (
             <Card>
               <CardHeader title="IR / Taxi" />
-              <RosterTable slots={view.reserve} showPoints={false} week={week} />
+              <RosterTable slots={view.reserve} week={week} />
+            </Card>
+          ) : null}
+          {!view.team.is_user_team ? (
+            <Card>
+              <CardHeader
+                title="Compare"
+                description="Records, projections, and depth, with a write-up of the same numbers."
+                action={
+                  <Link href={`/teams?compare=${view.team.id}`}>
+                    <Button size="sm" variant="secondary">Compare teams</Button>
+                  </Link>
+                }
+              />
             </Card>
           ) : null}
           {!view.team.is_user_team && mine.data ? <TradeOffer leagueId={leagueId} mine={mine.data} opponent={view} /> : null}

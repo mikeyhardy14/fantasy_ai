@@ -2,7 +2,7 @@
 
 from app.nfl_data.espn import parse_scoreboard
 from app.nfl_data.market import BookPrice, american_probability, consensus, fair_home_probability
-from app.nfl_data.rankings import RankCandidate, build_rankings, replacement_ranks
+from app.nfl_data.rankings import RankCandidate, build_rankings, opportunity_ids, replacement_ranks
 
 
 def _player(player_id: str, name: str, position: str, points: float, **kwargs) -> RankCandidate:
@@ -163,3 +163,16 @@ def test_team_and_roster_filters():
 
     free, _ = build_rankings(players, team_count=1, roster_positions=["RB"], exclude_ids={"1"})
     assert [row.player.name for row in free] == ["Road Back", "Other Back"]
+
+
+def test_opportunity_keeps_backups_when_the_lead_is_sidelined():
+    players = [
+        _player("1", "Lead Back", "RB", 18, injury="Out", ruled_out=True),
+        _player("2", "Next Back", "RB", 9),
+        _player("3", "Healthy Lead", "WR", 16, team="DAL"),
+        _player("4", "Second Receiver", "WR", 8, team="DAL"),
+        _player("5", "Hurt Receiver", "WR", 15, team="BUF", injury="Doubtful"),
+        _player("6", "Target Bump", "WR", 7, team="BUF"),
+    ]
+    assert opportunity_ids(players, "carries") == {"2"}
+    assert opportunity_ids(players, "targets") == {"6"}

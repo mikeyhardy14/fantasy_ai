@@ -111,10 +111,40 @@ export interface RecentGame {
   stats: Record<string, number>;
 }
 
+export interface GameLook {
+  projected_points: number | null;
+  points: number | null;
+  stat_line: string | null;
+  opponent: string | null;
+  home: boolean | null;
+  away: string | null;
+  home_team: string | null;
+  away_score: number | null;
+  home_score: number | null;
+  state: "pre" | "in" | "post" | null;
+  clock: string | null;
+}
+
+export interface RosteredOn {
+  team_id: string;
+  team_name: string;
+  owner_name: string | null;
+  is_user_team: boolean;
+}
+
 export interface PlayerSheet {
   player: Player;
   recent_games: RecentGame[];
   games_note: string | null;
+  rostered_on?: RosteredOn | null;
+  game?: GameLook | null;
+}
+
+export interface SuggestedTrade {
+  give: { id: string; name: string; position: string | null }[];
+  receive: { id: string; name: string; position: string | null }[];
+  opponent_name: string;
+  message: string;
 }
 
 export interface RankingRow {
@@ -138,6 +168,7 @@ export interface RankingRow {
   season_points: number | null;
   vorp: number | null;
   owned?: "you" | "league" | null;
+  game?: GameLook | null;
 }
 
 export interface Rankings {
@@ -176,6 +207,7 @@ export interface RosterSlot {
   player: Player | null;
   points: number | null;
   stat_line?: string | null;
+  game?: GameLook | null;
   flags: Flag[];
 }
 
@@ -428,6 +460,66 @@ export interface TradeAnalysis {
   data_gaps: string[];
 }
 
+export interface ChatTradePlayer {
+  name: string;
+  position: string | null;
+  headshot_url?: string | null;
+}
+
+export interface ChatTradeSide {
+  manager: string;
+  receives: ChatTradePlayer[];
+  picks: string[];
+}
+
+export interface ChatTrade {
+  status: string;
+  transaction_id?: string | null;
+  involves_user?: boolean;
+  sides: ChatTradeSide[];
+}
+
+export interface RespondTradeResult {
+  message: string;
+  status: string;
+  transaction_id: string;
+}
+
+export interface LeagueMessage {
+  id: string;
+  author_name: string;
+  text: string;
+  created_at: string;
+  pinned: boolean;
+  mine?: boolean;
+  trade?: ChatTrade | null;
+}
+
+export interface LineupManagement {
+  enabled: boolean;
+  available: boolean;
+}
+
+export interface AutoReply {
+  enabled: boolean;
+  user_ids: string[];
+  notes: Record<string, string>;
+  available: boolean;
+}
+
+export interface DirectChat {
+  user_id: string;
+  name: string;
+  team_name: string;
+  thread_id: string | null;
+  last_message_at: string | null;
+}
+
+export interface DirectSend {
+  thread_id: string;
+  messages: LeagueMessage[];
+}
+
 export interface ProposeTradeResult {
   message: string;
   status: string;
@@ -472,6 +564,49 @@ export interface WeeklyBriefing {
   roster_assessment: { position: string; grade: string }[];
   narrative: string | null;
   generated_by: "openai" | "gemini" | "groq" | "deterministic";
+}
+
+export interface CompareStarter {
+  name: string;
+  slot: string;
+  position: string | null;
+  projected_points: number | null;
+  points: number | null;
+  injury_status: string | null;
+  on_bye: boolean;
+}
+
+export interface ComparePosition {
+  position: string;
+  grade: string;
+  healthy_depth: number;
+  total_depth: number;
+  starter_projection: number | null;
+}
+
+export interface CompareSide {
+  team_id: string;
+  name: string;
+  owner_name: string | null;
+  is_user_team: boolean;
+  record: string;
+  points_for: number;
+  points_against: number;
+  projected_points: number | null;
+  faab_remaining: number | null;
+  waiver_position: number | null;
+  starters_out: number;
+  starters_on_bye: number;
+  positions: ComparePosition[];
+  starters: CompareStarter[];
+}
+
+export interface TeamCompare {
+  week: number;
+  sides: CompareSide[];
+  summary: string;
+  generated_by: "openai" | "gemini" | "groq" | "deterministic";
+  model: string | null;
 }
 
 export interface HealthResponse {

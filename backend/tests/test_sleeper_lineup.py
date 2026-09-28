@@ -55,6 +55,25 @@ def install_graphql(router, mode: dict):
                     }
                 },
             )
+        if "my_dms" in query:
+            return Response(200, json={"data": {"my_dms": mode.get("dms", [])}})
+        if "create_dm" in query:
+            seen["created_dm"] = body["variables"]
+            return Response(200, json={"data": {"create_dm": {"dm_id": "dm-new"}}})
+        if "create_message" in query:
+            seen["sent"] = body["variables"]
+            return Response(200, json={"data": {"create_message": {"message_id": "sent-1"}}})
+        if "messages(" in query:
+            return Response(200, json={"data": {"messages": mode.get("messages", [])}})
+        if "accept_trade" in query or "reject_trade" in query:
+            variables = body["variables"]
+            seen["respond"] = variables
+            seen["respond_op"] = "accept" if "accept_trade" in query else "reject"
+            key = "accept_trade" if "accept_trade" in query else "reject_trade"
+            return Response(
+                200,
+                json={"data": {key: {"transaction_id": variables["transaction_id"], "status": "complete" if key == "accept_trade" else "rejected"}}},
+            )
         if "propose_trade" in query:
             variables = body["variables"]
             seen["trade"] = variables
@@ -543,11 +562,18 @@ async def test_propose_trade_sends_the_offer_to_one_manager(client, auth_headers
     assert body["status"] == "pending"
     assert "Bench Receiver" in body["message"]
     assert "Opp RunnerOne" in body["message"]
-    assert seen["trade"]["k_drops"] == ["3004"]
-    assert seen["trade"]["k_adds"] == ["2005"]
-    assert seen["trade"]["v_adds"] == [1]
-    assert seen["trade"]["v_drops"] == [2]
+    assert seen["trade"]["k_drops"] == ["3004", "2005"]
+    assert seen["trade"]["k_adds"] == ["2005", "3004"]
+    assert seen["trade"]["v_adds"] == [1, 2]
+    assert seen["trade"]["v_drops"] == [1, 2]
     assert any(slot["player"] and slot["player"]["name"] == "Bench Receiver" for slot in team["bench"])
+    listed = await client.get(f"/api/leagues/{league['id']}/trades", headers=auth_headers)
+    assert listed.status_code == 200, listed.text
+    offer = next(row for row in listed.json() if row["status"] == "pending")
+    assert offer["involves_user"] is True
+    user_id = team["team"]["id"]
+    assert [player["player_name"] for player in offer["drops"] if player["team_id"] == user_id] == ["Bench Receiver"]
+    assert [player["player_name"] for player in offer["adds"] if player["team_id"] == user_id] == ["Opp RunnerOne"]
 
     mixed = await client.post(
         f"/api/leagues/{league['id']}/trades",
@@ -611,3 +637,234 @@ async def test_add_can_drop_someone_or_be_refused(client, auth_headers, sleeper_
         if slot["player"]
     ]
     assert "Flash Backup" not in left
+
+
+async def test_player_sheet_names_the_team_and_drafts_a_trade(client, auth_headers, sleeper_mock):
+    league = await _import(client, auth_headers)
+    rosters = await client.get(f"/api/leagues/{league['id']}/rosters", headers=auth_headers)
+    assert rosters.status_code == 200, rosters.text
+    rows = rosters.json()
+    rival = next(row for row in rows if row["team"]["name"] == "Rival")
+    target = next(slot["player"] for slot in rival["starters"] if slot["player"]["external_ids"]["sleeper"] == "2005")
+    sheet = await client.get(f"/api/leagues/{league['id']}/players/{target['id']}", headers=auth_headers)
+    assert sheet.status_code == 200, sheet.text
+    assert sheet.json()["rostered_on"]["team_name"] == "Rival"
+    assert sheet.json()["rostered_on"]["is_user_team"] is False
+
+    mine = next(row for row in rows if row["team"]["is_user_team"])
+    own = next(slot["player"] for slot in mine["starters"] if slot["player"])
+    own_sheet = await client.get(f"/api/leagues/{league['id']}/players/{own['id']}", headers=auth_headers)
+    assert own_sheet.status_code == 200, own_sheet.text
+    assert own_sheet.json()["rostered_on"]["is_user_team"] is True
+
+    draft = await client.post(
+        f"/api/leagues/{league['id']}/ai/trade/for",
+        json={"player_id": target["id"]},
+        headers=auth_headers,
+    )
+    assert draft.status_code == 200, draft.text
+    offer = draft.json()
+    assert offer["opponent_name"] == "Rival"
+    assert offer["receive"][0]["name"] == "Opp RunnerOne"
+    mine_ids = {
+        slot["player"]["id"]
+        for group in ("starters", "bench", "reserve")
+        for slot in mine[group]
+        if slot["player"]
+    }
+    assert offer["give"][0]["id"] in mine_ids
+    assert "Opp RunnerOne" in offer["message"]
+
+
+async def test_league_chat_shows_messages_from_other_managers(client, auth_headers, sleeper_mock):
+    install_graphql(
+        sleeper_mock,
+        {
+            "messages": [
+                {"message_id": "m2", "created": 1_700_000_000_000, "author_display_name": "Rival", "text": "Nice win", "pinned": False},
+                {"message_id": "m1", "created": 1_600_000_000_000, "author_display_name": "Mike", "text": "Good luck", "pinned": True},
+                {"message_id": "m3", "created": 1_800_000_000_000, "author_display_name": "Bot", "text": "  ", "pinned": False},
+            ]
+        },
+    )
+    league = await _import(client, auth_headers)
+    missing = await client.get(f"/api/leagues/{league['id']}/messages", headers=auth_headers)
+    assert missing.status_code == 422
+    assert "token" in missing.json()["error"]["message"].lower()
+
+    await _save_token(client, auth_headers)
+    resp = await client.get(f"/api/leagues/{league['id']}/messages", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()
+    assert [row["author_name"] for row in rows] == ["Mike", "Rival"]
+    assert rows[0]["text"] == "Good luck"
+    assert rows[0]["pinned"] is True
+    assert rows[1]["text"] == "Nice win"
+
+
+async def test_league_chat_shows_the_players_in_a_proposed_trade(client, auth_headers, sleeper_mock):
+    seen = install_graphql(
+        sleeper_mock,
+        {
+            "messages": [
+                {
+                    "message_id": "t1",
+                    "created": 1_700_000_000_000,
+                    "author_display_name": "Heater911",
+                    "text": "<@Heater911> has proposed a trade in Stud Lite Cup",
+                    "attachment": {
+                        "type": "transactions",
+                        "data": [
+                            {
+                                "type": "trade",
+                                "transaction_id": "9001",
+                                "transactions_by_roster": {
+                                    "1": {
+                                        "status": "pending",
+                                        "user": {"display_name": "Heater911", "user_id": fx.USER_ID},
+                                        "adds": [{"first_name": "TreVeyon", "last_name": "Henderson", "position": "RB", "player_id": "12529"}],
+                                        "drops": [{"first_name": "Quinshon", "last_name": "Judkins", "position": "RB"}],
+                                        "added_picks": [{"season": "2027", "round": 2}],
+                                    },
+                                    "9": {
+                                        "status": "pending",
+                                        "user": {"display_name": "Rival"},
+                                        "adds": [{"first_name": "Quinshon", "last_name": "Judkins", "position": "RB"}],
+                                        "drops": [{"first_name": "TreVeyon", "last_name": "Henderson", "position": "RB"}],
+                                        "added_picks": [],
+                                    },
+                                },
+                            }
+                        ],
+                    },
+                },
+                {
+                    "message_id": "t2",
+                    "created": 1_700_000_100_000,
+                    "author_display_name": "sys",
+                    "text": "A trade is now pending.",
+                    "attachment": {
+                        "type": "transactions",
+                        "data": [
+                            {
+                                "type": "trade",
+                                "transaction_id": "9002",
+                                "transactions_by_roster": {
+                                    "3": {
+                                        "status": "pending",
+                                        "user": {"display_name": "Other", "user_id": "333"},
+                                        "adds": [{"first_name": "A", "last_name": "Player", "position": "WR", "player_id": "1"}],
+                                        "drops": [],
+                                        "added_picks": [],
+                                    },
+                                    "4": {
+                                        "status": "pending",
+                                        "user": {"display_name": "Else", "user_id": "444"},
+                                        "adds": [{"first_name": "B", "last_name": "Player", "position": "QB", "player_id": "2"}],
+                                        "drops": [],
+                                        "added_picks": [],
+                                    },
+                                },
+                            }
+                        ],
+                    },
+                },
+            ]
+        },
+    )
+    league = await _import(client, auth_headers)
+    await _save_token(client, auth_headers)
+    resp = await client.get(f"/api/leagues/{league['id']}/messages", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()) == 1
+    row = resp.json()[0]
+    assert "<@" not in row["text"]
+    assert row["text"] == "Heater911 offered Quinshon Judkins to Rival for TreVeyon Henderson and 2027 round 2"
+    sides = {side["manager"]: side for side in row["trade"]["sides"]}
+    assert row["trade"]["involves_user"] is True
+    assert row["trade"]["transaction_id"] == "9001"
+    assert sides["Heater911"]["receives"][0]["name"] == "TreVeyon Henderson"
+    assert sides["Heater911"]["receives"][0]["headshot_url"].endswith("/12529.jpg")
+    assert sides["Heater911"]["picks"] == ["2027 round 2"]
+    assert sides["Rival"]["receives"][0]["name"] == "Quinshon Judkins"
+
+    stranger = await client.post(
+        f"/api/leagues/{league['id']}/trades/9002/respond",
+        json={"action": "decline"},
+        headers=auth_headers,
+    )
+    assert stranger.status_code == 422
+    assert "respond" not in seen
+
+    accepted = await client.post(
+        f"/api/leagues/{league['id']}/trades/9001/respond",
+        json={"action": "accept"},
+        headers=auth_headers,
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert seen["respond_op"] == "accept"
+    assert seen["respond"]["transaction_id"] == "9001"
+    assert seen["respond"]["league_id"] == fx.LEAGUE_ID
+    assert seen["respond"]["leg"] == 4
+
+
+async def test_direct_chat_is_only_with_managers_in_this_league(client, auth_headers, sleeper_mock):
+    seen = install_graphql(
+        sleeper_mock,
+        {
+            "dms": [
+                {
+                    "dm_id": "dm-rival",
+                    "title": None,
+                    "dm_type": "single",
+                    "last_message_time": 1_700_000_000_000,
+                    "recent_users": [
+                        {"user_id": fx.USER_ID, "display_name": "MikeFantasy"},
+                        {"user_id": fx.OPP_USER_ID, "display_name": "Rival"},
+                    ],
+                },
+                {
+                    "dm_id": "dm-stranger",
+                    "title": None,
+                    "dm_type": "single",
+                    "last_message_time": 1_800_000_000_000,
+                    "recent_users": [
+                        {"user_id": fx.USER_ID, "display_name": "MikeFantasy"},
+                        {"user_id": "999", "display_name": "Outsider"},
+                    ],
+                },
+            ],
+            "messages": [
+                {"message_id": "1", "created": 1_600_000_000_000, "author_id": fx.OPP_USER_ID, "author_display_name": "Rival", "text": "You there?"},
+                {"message_id": "2", "created": 1_700_000_000_000, "author_id": fx.USER_ID, "author_display_name": "Mike", "text": "Yeah"},
+            ],
+        },
+    )
+    league = await _import(client, auth_headers)
+    await _save_token(client, auth_headers)
+    listed = await client.get(f"/api/leagues/{league['id']}/direct", headers=auth_headers)
+    assert listed.status_code == 200, listed.text
+    chats = listed.json()
+    assert [chat["name"] for chat in chats] == ["Rival"]
+    assert chats[0]["thread_id"] == "dm-rival"
+    assert chats[0]["team_name"] == "Rival"
+
+    hidden = await client.get(f"/api/leagues/{league['id']}/direct/dm-stranger", headers=auth_headers)
+    assert hidden.status_code == 422
+
+    opened = await client.get(f"/api/leagues/{league['id']}/direct/dm-rival", headers=auth_headers)
+    assert opened.status_code == 200, opened.text
+    assert opened.json()[0]["mine"] is False
+    assert opened.json()[1]["mine"] is True
+    assert opened.json()[1]["text"] == "Yeah"
+
+    sent = await client.post(
+        f"/api/leagues/{league['id']}/direct/dm-rival",
+        json={"text": "Trade?"},
+        headers=auth_headers,
+    )
+    assert sent.status_code == 200, sent.text
+    assert sent.json()["thread_id"] == "dm-rival"
+    assert seen["sent"]["parent_id"] == "dm-rival"
+    assert seen["sent"]["parent_type"] == "dm"
+    assert seen["sent"]["text"] == "Trade?"

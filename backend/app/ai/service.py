@@ -6,9 +6,13 @@ configuration. Never touches provider-specific data.
 
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
+from pydantic import ValidationError
+
 from app.ai import fallback, prompts
+from app.ai.trade_offer import offer_message, pick_give
 from app.ai.agent import Agent
 from app.ai.approvals import swaps_mentioned
 from app.ai.llm import LLMClient
@@ -28,6 +32,7 @@ from app.ai.trade_review import (
 from app.core.errors import AppError, NotFoundError, ValidationFailed
 from app.core.logging import get_logger
 from app.intelligence.briefing import build_briefing
+from app.intelligence.team_compare import comparison_side, comparison_summary
 from app.intelligence.recommendations import generate_recommendations
 from app.schemas.ai import (
     ChatMessageIn,
@@ -35,9 +40,13 @@ from app.schemas.ai import (
     RecommendationOut,
     TeamAnalysis,
     TeamAnalysisResponse,
+    CompareTeamsResponse,
+    SuggestTradeResponse,
     TradeAnalysis,
     TradeAnalysisRequest,
     TradeAnalysisResponse,
+    TradeDraft,
+    TradeSidePlayer,
     TradeReviewResponse,
     WaiverSuggestionsResponse,
     WeeklyBriefing,
@@ -73,14 +82,14 @@ class AIService:
         assert self.llm is not None
         return Agent(self.llm, league_tool_registry, max_rounds=self.max_tool_rounds)
 
-    def _advice_agent(self) -> Agent:
+    def _advice_agent(self, max_rounds: int | None = None) -> Agent:
         """Same tools as chat, without the lineup writes."""
         assert self.llm is not None
         registry = ToolRegistry()
         for tool in league_tool_registry.tools.values():
             if tool.name not in {"change_lineup", "set_lineup", "claim_player"}:
                 registry.register(tool)
-        return Agent(self.llm, registry, max_rounds=self.max_tool_rounds)
+        return Agent(self.llm, registry, max_rounds=max_rounds or self.max_tool_rounds)
 
     async def _system(self, ctx: ToolContext) -> dict:
         tc = await ctx.team_context()
@@ -164,7 +173,70 @@ class AIService:
             claims=list(ctx.pending_claims),
         )
 
+    async def manager_text(
+        self, ctx: ToolContext, other_name: str, history: list[ChatMessageIn], note: str = ""
+    ) -> str | None:
+        """A short text in the manager's own chat. No lineup or roster writes."""
+        if not self.enabled or not history or history[-1].role != "user":
+            return None
+        tc = await ctx.team_context()
+        content = prompts.AUTO_REPLY.format(
+            league_name=tc.league_name,
+            team_name=tc.team.team.name,
+            week=tc.week,
+            other_name=other_name,
+        )
+        cleaned = note.strip()
+        if cleaned:
+            content += f"\n\nHow to talk to {other_name}:\n{cleaned[:1000]}\n\n{prompts.AUTO_REPLY_NOTE}\n"
+        messages = [
+            {
+                "role": "system",
+                "content": content,
+            },
+            *[{"role": item.role, "content": item.content} for item in history[-12:]],
+        ]
+        result = await self._advice_agent(max_rounds=3).run(messages, ctx, temperature=0.4)
+        return (result.content or "").strip() or None
+
     # ---- Waivers --------------------------------------------------------------------
+
+    async def compare_teams(self, ctx: ToolContext, team_ids: list[UUID], week: int | None = None) -> CompareTeamsResponse:
+        if len(set(team_ids)) < 2:
+            raise ValidationFailed("Pick two different teams.")
+        chosen_week = week or ctx.week
+        sides = []
+        for team_id in team_ids:
+            view = await ctx.service.team_by_id(ctx.league, team_id, chosen_week)
+            needs = ctx.service.roster_needs(ctx.league, view)
+            sides.append(comparison_side(view, needs))
+        summary = comparison_summary(sides)
+        generated_by = "deterministic"
+        model = None
+        if self.enabled and self.llm is not None:
+            try:
+                facts = json.dumps([side.model_dump(mode="json") for side in sides], default=str)
+                result = await self.llm.complete(
+                    [
+                        {"role": "system", "content": prompts.TEAM_COMPARE},
+                        {"role": "user", "content": facts},
+                    ],
+                    temperature=0.2,
+                )
+                text = (result.content or "").strip()
+                if text:
+                    summary = text
+                    generated_by = self._generated_by()
+                    model = result.model
+            except AppError as exc:
+                log.warning("ai.compare_failed", error=exc.message)
+        return CompareTeamsResponse(
+            week=chosen_week,
+            sides=sides,
+            summary=summary,
+            generated_by=generated_by,  # type: ignore[arg-type]
+            model=model,
+        )
 
     async def suggest_waivers(self, ctx: ToolContext) -> WaiverSuggestionsResponse:
         tc = await ctx.team_context()
@@ -219,6 +291,72 @@ class AIService:
         result = await self._agent().run(messages, ctx, response_model=TradeAnalysis, temperature=0.2)
         assert isinstance(result.structured, TradeAnalysis)
         return TradeAnalysisResponse(analysis=result.structured, generated_by=self._generated_by())
+
+    async def suggest_trade_for(self, ctx: ToolContext, player_id: UUID) -> SuggestTradeResponse:
+        """Draft an offer for one player on another roster. Nothing is sent."""
+        target = await ctx.service.get_player_in_league(ctx.league, player_id, ctx.week)
+        owner = await ctx.service.rostered_on(ctx.league, player_id, ctx.week)
+        if owner is None:
+            raise ValidationFailed(f"{target.name} is a free agent, so there is no team to trade with.")
+        if owner.is_user_team:
+            raise ValidationFailed(f"{target.name} is already on your team.")
+        tc = await ctx.team_context()
+        chosen = pick_give(tc.all_roster, target, tc.needs)
+        if not chosen or chosen[0].player is None:
+            raise ValidationFailed("Your roster has no one to offer.")
+        give = [slot.player for slot in chosen if slot.player]
+        message = offer_message(give, target, owner.team_name)
+        generated_by = "deterministic"
+        if self.enabled:
+            drafted = await self._draft_offer(ctx, target, owner.team_name, tc.all_roster)
+            if drafted is not None:
+                give, message = drafted
+                generated_by = self._generated_by()
+        return SuggestTradeResponse(
+            give=[TradeSidePlayer(id=player.id, name=player.name, position=player.position) for player in give],
+            receive=[TradeSidePlayer(id=target.id, name=target.name, position=target.position)],
+            opponent_name=owner.team_name,
+            message=message,
+            generated_by=generated_by,
+        )
+
+    async def _draft_offer(self, ctx, target, opponent_name: str, roster):
+        assert self.llm is not None
+        allowed = {str(slot.player.id): slot.player for slot in roster if slot.player}
+        facts = {
+            "target": {"id": str(target.id), "name": target.name, "position": target.position, "projected_points": target.projected_points},
+            "opponent": opponent_name,
+            "roster": [
+                {
+                    "id": str(slot.player.id),
+                    "name": slot.player.name,
+                    "position": slot.player.position,
+                    "slot": slot.slot,
+                    "starter": slot.is_starter,
+                    "projected_points": slot.player.projected_points,
+                }
+                for slot in roster
+                if slot.player
+            ],
+        }
+        try:
+            result = await self.llm.complete(
+                [
+                    await self._system(ctx),
+                    {"role": "system", "content": prompts.TRADE_OFFER_INSTRUCTIONS},
+                    {"role": "user", "content": f"Offer facts:\n{facts}"},
+                ],
+                response_model=TradeDraft,
+                temperature=0.2,
+            )
+            draft = TradeDraft.model_validate_json(result.content or "")
+        except (AppError, ValidationError, ValueError) as exc:
+            log.warning("ai.trade_offer_failed", error=str(exc))
+            return None
+        picked = [allowed[pid] for pid in draft.give_player_ids if pid in allowed]
+        if not picked:
+            return None
+        return picked, draft.message
 
     async def made_trades_message(self, ctx: ToolContext) -> str:
         trades = reviewable(await ctx.service.league_trades(ctx.league))

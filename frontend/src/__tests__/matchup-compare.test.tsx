@@ -46,6 +46,7 @@ describe("MatchupCompare", () => {
       />,
     );
     expect(screen.getByTestId("matchup-row")).toHaveAttribute("data-live", "true");
+    expect(screen.getByTestId("matchup-row")).toHaveClass("bg-amber-400/10");
     expect(screen.queryByTestId("start-call")).toBeNull();
     expect(screen.getAllByTestId("point-status")[0]).toHaveTextContent("8:22 - 2nd");
   });
@@ -101,5 +102,27 @@ describe("MatchupCompare", () => {
     expect(screen.queryByTestId("point-status")).toBeNull();
     expect(screen.queryByTestId("live-stats")).toBeNull();
     expect(screen.queryByText("Final")).toBeNull();
+  });
+
+  it("washes a bye row muted and an out row red", () => {
+    render(
+      <MatchupCompare
+        week={4}
+        current={false}
+        yours={[
+          slot({ slot: "RB", slot_index: 1, flags: ["BYE"], player: player({ name: "Bye Back" }) }),
+          slot({ slot: "WR", slot_index: 2, flags: ["OUT"], player: player({ name: "Out Wide" }) }),
+        ]}
+        theirs={[
+          slot({ slot: "RB", slot_index: 1, player: player({ name: "Other Back" }) }),
+          slot({ slot: "WR", slot_index: 2, player: player({ name: "Other Wide" }) }),
+        ]}
+        yourName="Us"
+        theirName="Them"
+      />,
+    );
+    const rows = screen.getAllByTestId("matchup-row");
+    expect(rows[0]).toHaveClass("bg-slate-500/10");
+    expect(rows[1]).toHaveClass("bg-red-500/10");
   });
 });

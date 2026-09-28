@@ -18,5 +18,5 @@ def headshot_url(player: Player) -> str | None:
         return f"https://a.espncdn.com/i/teamlogos/nfl/500/{espn_team(player.nfl_team).lower()}.png"
     sleeper_id = player.external_id_for("sleeper")
     if sleeper_id and str(sleeper_id).isdigit():
-        return f"https://sleepercdn.com/content/nfl/players/thumb/{sleeper_id}.jpg"
+        return f"https://sleepercdn.com/content/nfl/players/{sleeper_id}.jpg"
     return None

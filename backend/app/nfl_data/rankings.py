@@ -49,6 +49,36 @@ def ruled_out(status: str | None) -> bool:
     return status.strip().upper() in _OUT
 
 
+_SIDELINED = _OUT | {"DOUBTFUL", "D"}
+
+
+def opportunity_ids(players: list[RankCandidate], lens: str) -> set[str]:
+    """Backups who pick up work because the lead player at that spot is sidelined.
+
+    ``carries`` is running backs behind a sidelined lead back.
+    ``targets`` is receivers behind a sidelined lead receiver.
+    """
+    position = "RB" if lens == "carries" else "WR" if lens == "targets" else None
+    if position is None:
+        return set()
+    groups: dict[str, list[RankCandidate]] = {}
+    for player in players:
+        if player.position != position or player.on_bye or not player.nfl_team:
+            continue
+        groups.setdefault(player.nfl_team, []).append(player)
+    chosen: set[str] = set()
+    for group in groups.values():
+        group.sort(key=lambda row: (-(row.projected_points if row.projected_points is not None else -1), row.name))
+        lead = group[0]
+        status = (lead.injury_status or "").strip().upper()
+        if status not in _SIDELINED and not lead.ruled_out:
+            continue
+        for other in group[1:]:
+            if not other.ruled_out:
+                chosen.add(other.player_id)
+    return chosen
+
+
 def replacement_ranks(team_count: int, roster_positions: list[str]) -> dict[str, int]:
     """How many starters the league needs at each position.
 

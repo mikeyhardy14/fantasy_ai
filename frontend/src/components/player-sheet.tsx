@@ -1,25 +1,59 @@
 "use client";
 
+import { gameScore } from "@/components/player-game";
 import { opponentLabel, PlayerFace } from "@/components/player-face";
+import { useToast } from "@/components/toast";
 import { PositionBadge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { useLeague } from "@/lib/league";
-import type { PlayerSheet, RecentGame } from "@/lib/types";
+import { useLeagueDetail } from "@/lib/queries";
+import type { PlayerSheet, RecentGame, SuggestedTrade } from "@/lib/types";
 import { cn, formatPoints } from "@/lib/utils";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
 const SheetContext = createContext<((playerId: string) => void) | null>(null);
 
 export function PlayerSheetProvider({ children }: { children: ReactNode }) {
   const [playerId, setPlayerId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<SuggestedTrade | null>(null);
   const { selected } = useLeague();
+  const detail = useLeagueDetail(selected?.id);
+  const toast = useToast();
   const week = selected?.current_week;
+  const writes = selected?.provider === "sleeper" && !!detail.data?.account.writes_enabled;
   const sheet = useQuery({
     queryKey: ["league", selected?.id, "player-sheet", playerId, week],
     queryFn: () => api.leagues.playerSheet(selected!.id, playerId!, week),
     enabled: !!selected?.id && !!playerId,
   });
+  const suggest = useMutation({
+    mutationFn: () => api.ai.suggestTrade(selected!.id, playerId!),
+    onSuccess: (offer) => setDraft(offer),
+  });
+  const send = useMutation({
+    mutationFn: () => {
+      if (!draft) throw new Error("Ask for an offer first.");
+      return api.leagues.proposeTrade(selected!.id, {
+        give: draft.give.map((player) => player.id),
+        receive: draft.receive.map((player) => player.id),
+      });
+    },
+    onSuccess: (result) => {
+      toast(result.message);
+      setDraft(null);
+      setPlayerId(null);
+    },
+  });
+
+  useEffect(() => {
+    setDraft(null);
+    suggest.reset();
+    send.reset();
+    // A new player starts a new offer. Resetting the mutations here is the point.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playerId]);
 
   useEffect(() => {
     if (!playerId) return;
@@ -29,6 +63,8 @@ export function PlayerSheetProvider({ children }: { children: ReactNode }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [playerId]);
+
+  const otherTeam = sheet.data?.rostered_on && !sheet.data.rostered_on.is_user_team;
 
   return (
     <SheetContext.Provider value={selected ? setPlayerId : null}>
@@ -40,6 +76,19 @@ export function PlayerSheetProvider({ children }: { children: ReactNode }) {
           loading={sheet.isLoading}
           error={sheet.error instanceof Error ? sheet.error.message : sheet.error ? "Could not load this player." : null}
           onClose={() => setPlayerId(null)}
+          onTradeFor={otherTeam ? () => suggest.mutate() : undefined}
+          tradePending={suggest.isPending}
+          tradeDraft={draft}
+          tradeError={
+            suggest.error instanceof Error
+              ? suggest.error.message
+              : send.error instanceof Error
+                ? send.error.message
+                : null
+          }
+          canSend={writes}
+          sending={send.isPending}
+          onSend={draft ? () => send.mutate() : undefined}
         />
       ) : null}
     </SheetContext.Provider>
@@ -77,12 +126,26 @@ export function PlayerSheetDialog({
   loading,
   error,
   onClose,
+  onTradeFor,
+  tradePending = false,
+  tradeDraft = null,
+  tradeError = null,
+  canSend = false,
+  sending = false,
+  onSend,
 }: {
   sheet: PlayerSheet | undefined;
   week?: number;
   loading: boolean;
   error: string | null;
   onClose: () => void;
+  onTradeFor?: () => void;
+  tradePending?: boolean;
+  tradeDraft?: SuggestedTrade | null;
+  tradeError?: string | null;
+  canSend?: boolean;
+  sending?: boolean;
+  onSend?: () => void;
 }) {
   const player = sheet?.player;
   const pointsLabel = sheet?.recent_games[0]?.points_label;
@@ -101,7 +164,7 @@ export function PlayerSheetDialog({
         {player ? (
           <div className="space-y-5">
             <div className="flex items-center gap-3">
-              <PlayerFace url={player.headshot_url} name={player.name} />
+              <PlayerFace url={player.headshot_url} name={player.name} size="lg" />
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <PositionBadge position={player.position} />
@@ -113,8 +176,54 @@ export function PlayerSheetDialog({
                   {player.season_points != null ? ` · ${formatPoints(player.season_points)} total` : ""}
                   {player.projected_points != null ? ` · Proj ${formatPoints(player.projected_points)}` : ""}
                 </p>
+                <p className="mt-1 text-sm text-slate-200" data-testid="rostered-on">
+                  {sheet?.rostered_on
+                    ? sheet.rostered_on.is_user_team
+                      ? "On your team"
+                      : `On ${sheet.rostered_on.team_name}${sheet.rostered_on.owner_name ? ` · ${sheet.rostered_on.owner_name}` : ""}`
+                    : "Free agent"}
+                </p>
               </div>
             </div>
+
+            <section data-testid="this-week" className="border-t border-surface-border pt-4">
+              <h3 className="text-[11px] uppercase tracking-wide text-slate-500">This week</h3>
+              <p className="mt-2 text-sm text-slate-100">Projected {formatPoints(player.projected_points)}</p>
+              {sheet?.game ? (
+                <div className="mt-1 space-y-1 text-sm text-slate-300">
+                  {gameScore(sheet.game) ? <p>{gameScore(sheet.game)}</p> : null}
+                  {sheet.game.clock ? <p>{sheet.game.clock}</p> : null}
+                  {sheet.game.points != null ? <p>{formatPoints(sheet.game.points)} fantasy points</p> : null}
+                  {sheet.game.stat_line ? <p>{sheet.game.stat_line}</p> : null}
+                </div>
+              ) : (
+                <p className="mt-1 text-sm text-slate-500">No live game posted for this week.</p>
+              )}
+            </section>
+
+            {onTradeFor ? (
+              <div className="space-y-3 border-t border-surface-border pt-4">
+                <Button type="button" size="sm" data-testid="trade-for" loading={tradePending} onClick={onTradeFor}>
+                  Trade for
+                </Button>
+                {tradeDraft ? (
+                  <div className="space-y-2 text-sm">
+                    <p className="text-slate-200" data-testid="trade-draft">{tradeDraft.message}</p>
+                    <p className="text-slate-400">
+                      You give {tradeDraft.give.map((side) => side.name).join(", ")} for {tradeDraft.receive.map((side) => side.name).join(", ")}.
+                    </p>
+                    {canSend ? (
+                      <Button type="button" size="sm" data-testid="trade-send" loading={sending} onClick={onSend}>
+                        Send
+                      </Button>
+                    ) : (
+                      <p className="text-xs text-slate-500">Save a Sleeper token in Settings to send an offer.</p>
+                    )}
+                  </div>
+                ) : null}
+                {tradeError ? <p className="text-sm text-red-300">{tradeError}</p> : null}
+              </div>
+            ) : null}
 
             <section>
               <h3 className="text-[11px] uppercase tracking-wide text-slate-500">Why this projection</h3>

@@ -13,20 +13,30 @@ from app.api.deps import (
     SettingsDep,
     ToolCtx,
 )
-from app.core.errors import ProviderNotImplemented
+from app.core.errors import ProviderNotImplemented, ValidationFailed
 from app.core.logging import get_logger
 from app.domain.enums import Provider
 from app.intelligence.recommendations import generate_recommendations
 from app.schemas.ai import RecommendationOut, WeeklyBriefing
 from app.schemas.league import (
     AddPlayerRequest,
+    AutoReplyOut,
+    AutoReplyUpdate,
     LeagueDetailOut,
+    DirectChatOut,
+    DirectSendOut,
     LeagueMatchupOut,
+    LeagueMessageOut,
     LeagueOut,
+    LineupManagementOut,
+    LineupManagementUpdate,
     LineupUpdateRequest,
     LineupUpdateResponse,
     MatchupOut,
     ProposeTradeRequest,
+    RespondTradeRequest,
+    RespondTradeResponse,
+    SendDirectRequest,
     ProposeTradeResponse,
     PlayerOut,
     PlayerSheetOut,
@@ -38,6 +48,8 @@ from app.schemas.league import (
     TeamOut,
     TransactionOut,
 )
+from app.services.auto_reply import get_auto_reply, save_auto_reply
+from app.services.lineup_management import get_lineup_management, save_lineup_management
 from app.services.sleeper_writes import build_sleeper_write_service
 from app.services.sync_service import SyncService
 
@@ -198,6 +210,7 @@ async def get_rankings(
     q: str | None = Query(default=None, max_length=60),
     team: str | None = Query(default=None, max_length=5),
     scope: str | None = Query(default=None, max_length=12),
+    lens: str | None = Query(default=None, max_length=12),
 ) -> RankingsOut:
     pos = position.upper() if position else None
     if pos and pos not in {"QB", "RB", "WR", "TE", "FLEX", "K", "DEF"}:
@@ -205,7 +218,8 @@ async def get_rankings(
     query = q.strip() if q and len(q.strip()) >= 2 else None
     nfl_team = team.strip().upper() if team and team.strip() else None
     roster_scope = scope if scope in {"mine", "available"} else None
-    return await ctx.rankings(league, week, pos, query, nfl_team, roster_scope)
+    work = lens if lens in {"carries", "targets"} else None
+    return await ctx.rankings(league, week, pos, query, nfl_team, roster_scope, work)
 
 
 @router.get("/{league_id}/players", response_model=list[PlayerOut])
@@ -230,6 +244,106 @@ async def get_standings(league: OwnedLeague, ctx: ContextService) -> list[Standi
     return await ctx.standings(league)
 
 
+@router.get("/{league_id}/messages", response_model=list[LeagueMessageOut])
+async def get_league_messages(
+    league: OwnedLeague,
+    session: SessionDep,
+    providers: Providers,
+    ctx: ContextService,
+    cipher: CipherDep,
+    settings: SettingsDep,
+    limit: int = Query(default=80, ge=1, le=200),
+) -> list[LeagueMessageOut]:
+    service = build_sleeper_write_service(session, ctx, providers, cipher, settings.sleeper_graphql_url)
+    return await service.league_messages(league, limit)
+
+
+@router.get("/{league_id}/auto-reply", response_model=AutoReplyOut)
+async def read_auto_reply(league: OwnedLeague, user: CurrentUser, session: SessionDep) -> AutoReplyOut:
+    return await get_auto_reply(session, user, league)
+
+
+@router.put("/{league_id}/auto-reply", response_model=AutoReplyOut)
+async def update_auto_reply(
+    league: OwnedLeague, body: AutoReplyUpdate, user: CurrentUser, session: SessionDep
+) -> AutoReplyOut:
+    return await save_auto_reply(session, user, league, body)
+
+
+@router.get("/{league_id}/management", response_model=LineupManagementOut)
+async def read_lineup_management(
+    league: OwnedLeague, user: CurrentUser, session: SessionDep
+) -> LineupManagementOut:
+    return await get_lineup_management(session, user, league)
+
+
+@router.put("/{league_id}/management", response_model=LineupManagementOut)
+async def update_lineup_management(
+    league: OwnedLeague, body: LineupManagementUpdate, user: CurrentUser, session: SessionDep
+) -> LineupManagementOut:
+    return await save_lineup_management(session, user, league, body)
+
+
+@router.get("/{league_id}/direct", response_model=list[DirectChatOut])
+async def get_direct_chats(
+    league: OwnedLeague,
+    session: SessionDep,
+    providers: Providers,
+    ctx: ContextService,
+    cipher: CipherDep,
+    settings: SettingsDep,
+) -> list[DirectChatOut]:
+    service = build_sleeper_write_service(session, ctx, providers, cipher, settings.sleeper_graphql_url)
+    return await service.direct_chats(league)
+
+
+@router.get("/{league_id}/direct/{thread_id}", response_model=list[LeagueMessageOut])
+async def get_direct_messages(
+    league: OwnedLeague,
+    thread_id: str,
+    session: SessionDep,
+    providers: Providers,
+    ctx: ContextService,
+    cipher: CipherDep,
+    settings: SettingsDep,
+) -> list[LeagueMessageOut]:
+    service = build_sleeper_write_service(session, ctx, providers, cipher, settings.sleeper_graphql_url)
+    return await service.direct_messages(league, thread_id)
+
+
+@router.post("/{league_id}/direct/{thread_id}", response_model=DirectSendOut)
+async def send_direct_message(
+    league: OwnedLeague,
+    thread_id: str,
+    body: SendDirectRequest,
+    session: SessionDep,
+    providers: Providers,
+    ctx: ContextService,
+    cipher: CipherDep,
+    settings: SettingsDep,
+) -> DirectSendOut:
+    service = build_sleeper_write_service(session, ctx, providers, cipher, settings.sleeper_graphql_url)
+    sent_thread, messages = await service.send_direct(league, body.text, thread_id=thread_id)
+    return DirectSendOut(thread_id=sent_thread, messages=messages)
+
+
+@router.post("/{league_id}/direct", response_model=DirectSendOut)
+async def start_direct_message(
+    league: OwnedLeague,
+    body: SendDirectRequest,
+    session: SessionDep,
+    providers: Providers,
+    ctx: ContextService,
+    cipher: CipherDep,
+    settings: SettingsDep,
+) -> DirectSendOut:
+    if not body.user_id:
+        raise ValidationFailed("Choose a manager to message.")
+    service = build_sleeper_write_service(session, ctx, providers, cipher, settings.sleeper_graphql_url)
+    thread_id, messages = await service.send_direct(league, body.text, user_id=body.user_id)
+    return DirectSendOut(thread_id=thread_id, messages=messages)
+
+
 @router.get("/{league_id}/trades", response_model=list[TransactionOut])
 async def get_trades(league: OwnedLeague, ctx: ContextService) -> list[TransactionOut]:
     return await ctx.league_trades(league)
@@ -247,6 +361,23 @@ async def propose_trade(
 ) -> ProposeTradeResponse:
     service = build_sleeper_write_service(session, ctx, providers, cipher, settings.sleeper_graphql_url)
     return await service.propose_trade(league, body.give, body.receive)
+
+
+@router.post("/{league_id}/trades/{transaction_id}/respond", response_model=RespondTradeResponse)
+async def respond_to_trade(
+    league: OwnedLeague,
+    transaction_id: str,
+    body: RespondTradeRequest,
+    session: SessionDep,
+    providers: Providers,
+    ctx: ContextService,
+    cipher: CipherDep,
+    settings: SettingsDep,
+) -> RespondTradeResponse:
+    service = build_sleeper_write_service(session, ctx, providers, cipher, settings.sleeper_graphql_url)
+    message = await service.respond_to_trade(league, transaction_id, body.action)
+    status = "complete" if body.action == "accept" else "rejected"
+    return RespondTradeResponse(message=message, status=status, transaction_id=transaction_id)
 
 
 @router.get("/{league_id}/transactions", response_model=list[TransactionOut])

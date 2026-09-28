@@ -33,7 +33,7 @@ const rankings: Rankings = {
 };
 
 describe("RankingsTable", () => {
-  it("shows the implied total, win probability, projection, and value", () => {
+  it("shows the implied total, projection, and value", () => {
     render(<RankingsTable rankings={rankings} />);
     expect(screen.getByText("Quinn Arrow")).toBeInTheDocument();
     expect(screen.queryByText(/Implied team points/)).not.toBeInTheDocument();
@@ -41,7 +41,7 @@ describe("RankingsTable", () => {
     expect(screen.getByText("25.0")).toBeInTheDocument();
     expect(screen.getByText("O/U 47 · -3")).toBeInTheDocument();
     expect(screen.getByText("vs LV")).toBeInTheDocument();
-    expect(screen.getByText("68%")).toBeInTheDocument();
+    expect(screen.queryByText("68%")).not.toBeInTheDocument();
     expect(screen.getByText("17.3")).toBeInTheDocument();
     expect(screen.getByRole("cell", { name: "88.4" })).toBeInTheDocument();
     expect(screen.getByText("+4.2")).toBeInTheDocument();
@@ -113,5 +113,17 @@ describe("RankingsTable", () => {
 
     await user.click(screen.getByTestId("rank-add"));
     expect(onAdd).toHaveBeenCalledWith("fa");
+  });
+
+  it("sends a rostered player to the trade builder", async () => {
+    const rows: Rankings = {
+      ...rankings,
+      rows: [{ ...rankings.rows[0], owned: "league" }],
+    };
+    const onTrade = vi.fn();
+    const user = userEvent.setup();
+    render(<RankingsTable rankings={rows} onTrade={onTrade} />);
+    await user.click(screen.getByTestId("rank-trade"));
+    expect(onTrade).toHaveBeenCalledWith("p1", "receive");
   });
 });

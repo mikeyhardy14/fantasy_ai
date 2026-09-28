@@ -1,6 +1,7 @@
 "use client";
 
 import { irRulesFromSettings } from "@/components/lineup-board";
+import { useToast } from "@/components/toast";
 import { LeagueBox, type LineupMove } from "@/components/league-box";
 import { NoLeague } from "@/components/no-league";
 import { PageHeader } from "@/components/page-header";
@@ -79,6 +80,7 @@ function MultiBoxLeague({
   const detail = useLeagueDetail(league.id);
   const qc = useQueryClient();
   const [notice, setNotice] = useState<string | null>(null);
+  const toast = useToast();
   const writesEnabled = league.provider === "sleeper" && !!detail.data?.account.writes_enabled;
   const reserveSlots = Number(detail.data?.roster_settings?.reserve_slots ?? 0);
   const reservePositions = Array.isArray(detail.data?.roster_settings?.roster_positions)
@@ -95,7 +97,8 @@ function MultiBoxLeague({
     onSuccess: async (result) => {
       qc.setQueryData(keys.team(league.id, league.current_week), result.team);
       qc.setQueryData(keys.team(league.id), result.team);
-      setNotice(result.message);
+      setNotice(null);
+      toast(result.message);
       await qc.invalidateQueries({ queryKey: ["league", league.id] });
     },
     onError: async (error) => {

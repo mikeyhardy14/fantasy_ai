@@ -1,6 +1,7 @@
 import { PlayerSheetDialog } from "@/components/player-sheet";
 import type { PlayerSheet } from "@/lib/types";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { player } from "./fixtures";
 
 const sheet: PlayerSheet = {
@@ -39,5 +40,38 @@ describe("PlayerSheetDialog", () => {
     expect(screen.getByText("@ LV")).toBeInTheDocument();
     expect(screen.getByText("19.4")).toBeInTheDocument();
     expect(screen.getByText("Points: This league.")).toBeInTheDocument();
+    expect(screen.getByTestId("rostered-on")).toHaveTextContent("Free agent");
+  });
+
+  it("names the fantasy team and sends the offer the assistant wrote", async () => {
+    const user = userEvent.setup();
+    const onTradeFor = vi.fn();
+    const onSend = vi.fn();
+    render(
+      <PlayerSheetDialog
+        sheet={{
+          ...sheet,
+          rostered_on: { team_id: "rival", team_name: "Rival", owner_name: "Casey", is_user_team: false },
+        }}
+        loading={false}
+        error={null}
+        onClose={() => undefined}
+        onTradeFor={onTradeFor}
+        canSend
+        onSend={onSend}
+        tradeDraft={{
+          give: [{ id: "give", name: "Bench Receiver", position: "WR" }],
+          receive: [{ id: "get", name: "Quinn Arrow", position: "QB" }],
+          opponent_name: "Rival",
+          message: "Offer Bench Receiver to Rival for Quinn Arrow.",
+        }}
+      />,
+    );
+    expect(screen.getByTestId("rostered-on")).toHaveTextContent("On Rival · Casey");
+    await user.click(screen.getByTestId("trade-for"));
+    expect(onTradeFor).toHaveBeenCalled();
+    expect(screen.getByTestId("trade-draft")).toHaveTextContent("Offer Bench Receiver to Rival for Quinn Arrow.");
+    await user.click(screen.getByTestId("trade-send"));
+    expect(onSend).toHaveBeenCalled();
   });
 });

@@ -6,6 +6,8 @@ what was sent. The public matchup payload is still re-read and reported.
 """
 
 import json
+import re
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,9 +27,14 @@ from app.intelligence.lineup import eligible_for_ir, is_eligible
 from app.models import FantasyAccount, League, RosterEntry
 from app.providers.sleeper.graphql import SleeperGraphQL
 from app.providers.sleeper.provider import SleeperProvider
-from app.repositories import FantasyAccountRepository, RosterRepository
+from app.repositories import FantasyAccountRepository, RosterRepository, TransactionRepository
 from app.schemas.league import (
     AddPlayerRequest,
+    ChatTrade,
+    ChatTradePlayer,
+    ChatTradeSide,
+    DirectChatOut,
+    LeagueMessageOut,
     LineupUpdateRequest,
     LineupUpdateResponse,
     PlayerOut,
@@ -95,6 +102,7 @@ class SleeperWriteService:
         self.graphql_url = graphql_url
         self.accounts = FantasyAccountRepository(session)
         self.rosters = RosterRepository(session)
+        self.transactions = TransactionRepository(session)
 
     async def save_token(self, user_id: UUID, raw_token: str, account_id: UUID | None = None) -> FantasyAccount:
         token = normalize_sleeper_token(raw_token)
@@ -357,6 +365,185 @@ class SleeperWriteService:
             message=_move_message(seat.name, where, confirmed_public),
         )
 
+    async def league_messages(self, league: League, limit: int = 80) -> list[LeagueMessageOut]:
+        """Messages on the league board, oldest first. Private threads are not included."""
+        graphql = self._chat_client(league, "League chat is available for Sleeper leagues.", "read the league chat.")
+        try:
+            rows = await graphql.league_messages(league.external_league_id)
+        except ProviderAuthError as exc:
+            raise ValidationFailed(str(exc.message)) from exc
+        except ProviderError as exc:
+            raise ValidationFailed(str(exc.message)) from exc
+        return _chat_messages(rows, user_id=league.fantasy_account.external_user_id)[-limit:]
+
+    async def direct_chats(self, league: League) -> list[DirectChatOut]:
+        """Other managers in this league, with the direct thread when one exists."""
+        graphql = self._chat_client(league, "Direct chat is available for Sleeper leagues.", "read chats with other managers.")
+        me = league.fantasy_account.external_user_id
+        teams = [
+            team
+            for team in await self.context.teams.list_for_league(league.id)
+            if team.owner_external_id and team.owner_external_id != me
+        ]
+        by_owner = {team.owner_external_id: team for team in teams}
+        try:
+            threads = await graphql.my_dms()
+        except ProviderAuthError as exc:
+            raise ValidationFailed(str(exc.message)) from exc
+        except ProviderError as exc:
+            raise ValidationFailed(str(exc.message)) from exc
+        thread_for: dict[str, tuple[str, datetime | None]] = {}
+        for thread in threads:
+            others = [user_id for user_id in _dm_user_ids(thread) if user_id != me and user_id in by_owner]
+            if len(others) != 1:
+                continue
+            when = _millis(thread.get("last_message_time"))
+            owner = others[0]
+            current = thread_for.get(owner)
+            if current is None or (when and (current[1] is None or when > current[1])):
+                thread_for[owner] = (str(thread.get("dm_id")), when)
+        chats = [
+            DirectChatOut(
+                user_id=str(team.owner_external_id),
+                name=team.owner_name or team.name,
+                team_name=team.name,
+                thread_id=thread_for[team.owner_external_id][0] if team.owner_external_id in thread_for else None,
+                last_message_at=thread_for[team.owner_external_id][1] if team.owner_external_id in thread_for else None,
+            )
+            for team in teams
+        ]
+        chats.sort(key=lambda chat: (chat.last_message_at is None, -(chat.last_message_at.timestamp() if chat.last_message_at else 0), chat.name.lower()))
+        return chats
+
+    async def direct_messages(self, league: League, thread_id: str, limit: int = 80) -> list[LeagueMessageOut]:
+        graphql = self._chat_client(league, "Direct chat is available for Sleeper leagues.", "read chats with other managers.")
+        await self._require_league_thread(league, graphql, thread_id)
+        try:
+            rows = await graphql.thread_messages(thread_id)
+        except ProviderAuthError as exc:
+            raise ValidationFailed(str(exc.message)) from exc
+        except ProviderError as exc:
+            raise ValidationFailed(str(exc.message)) from exc
+        return _chat_messages(rows, user_id=league.fantasy_account.external_user_id)[-limit:]
+
+    async def send_direct(
+        self, league: League, text: str, thread_id: str | None = None, user_id: str | None = None
+    ) -> tuple[str, list[LeagueMessageOut]]:
+        """Send a message in a thread with one manager from this league."""
+        graphql = self._chat_client(league, "Direct chat is available for Sleeper leagues.", "message other managers.")
+        if thread_id:
+            await self._require_league_thread(league, graphql, thread_id)
+        elif user_id:
+            thread_id = await self._open_thread(league, graphql, user_id)
+        else:
+            raise ValidationFailed("Choose a manager to message.")
+        try:
+            await graphql.send_message(thread_id, "dm", text.strip())
+            rows = await graphql.thread_messages(thread_id)
+        except ProviderAuthError as exc:
+            raise ValidationFailed(str(exc.message)) from exc
+        except ProviderError as exc:
+            raise ValidationFailed(str(exc.message)) from exc
+        return thread_id, _chat_messages(rows, user_id=league.fantasy_account.external_user_id)
+
+    async def respond_to_trade(self, league: League, transaction_id: str, action: str) -> str:
+        """Accept or decline a pending offer that includes this manager."""
+        if action not in {"accept", "decline"}:
+            raise ValidationFailed("Choose accept or decline.")
+        graphql = self._chat_client(league, "Responding to a trade is only available for Sleeper leagues.", "respond to a trade.")
+        try:
+            rows = await graphql.league_messages(league.external_league_id)
+        except ProviderAuthError as exc:
+            raise ValidationFailed(str(exc.message)) from exc
+        except ProviderError as exc:
+            raise ValidationFailed(str(exc.message)) from exc
+        me = league.fantasy_account.external_user_id
+        offer = next(
+            (
+                trade
+                for row in rows
+                if (trade := _trade_card(row.get("attachment"), me))
+                and trade.involves_user
+                and trade.transaction_id == transaction_id
+                and trade.status == "pending"
+            ),
+            None,
+        )
+        if offer is None:
+            raise ValidationFailed("That offer is not a pending trade that includes you.")
+        try:
+            result = await graphql.respond_trade(
+                league_id=league.external_league_id,
+                transaction_id=transaction_id,
+                week=league.current_week,
+                accept=action == "accept",
+            )
+        except ProviderAuthError as exc:
+            raise ValidationFailed(str(exc.message)) from exc
+        except ProviderError as exc:
+            raise ValidationFailed(str(exc.message)) from exc
+        status = str(result.get("status") or ("complete" if action == "accept" else "rejected"))
+        if action == "accept":
+            return f"You accepted the trade. Sleeper marked it {status}."
+        return f"You declined the trade. Sleeper marked it {status}."
+
+    def _chat_client(self, league: League, wrong_provider: str, missing_token: str) -> SleeperGraphQL:
+        if league.provider != Provider.SLEEPER:
+            raise ValidationFailed(wrong_provider)
+        if not league.fantasy_account.encrypted_credentials:
+            raise ValidationFailed(f"Save your Sleeper token in Settings to {missing_token}")
+        return SleeperGraphQL(self.graphql_url, self._token_for(league.fantasy_account))
+
+    async def _require_league_thread(self, league: League, graphql: SleeperGraphQL, thread_id: str) -> None:
+        me = league.fantasy_account.external_user_id
+        owners = {
+            team.owner_external_id
+            for team in await self.context.teams.list_for_league(league.id)
+            if team.owner_external_id and team.owner_external_id != me
+        }
+        try:
+            threads = await graphql.my_dms()
+        except ProviderAuthError as exc:
+            raise ValidationFailed(str(exc.message)) from exc
+        except ProviderError as exc:
+            raise ValidationFailed(str(exc.message)) from exc
+        for thread in threads:
+            if str(thread.get("dm_id")) != thread_id:
+                continue
+            others = [user_id for user_id in _dm_user_ids(thread) if user_id != me]
+            if len(others) == 1 and others[0] in owners:
+                return
+            break
+        raise ValidationFailed("That conversation is not with a manager in this league.")
+
+    async def _open_thread(self, league: League, graphql: SleeperGraphQL, user_id: str) -> str:
+        me = league.fantasy_account.external_user_id
+        if user_id == me:
+            raise ValidationFailed("Pick another manager.")
+        owners = {
+            team.owner_external_id
+            for team in await self.context.teams.list_for_league(league.id)
+            if team.owner_external_id
+        }
+        if user_id not in owners:
+            raise ValidationFailed("That person is not a manager in this league.")
+        try:
+            threads = await graphql.my_dms()
+        except ProviderAuthError as exc:
+            raise ValidationFailed(str(exc.message)) from exc
+        except ProviderError as exc:
+            raise ValidationFailed(str(exc.message)) from exc
+        for thread in threads:
+            others = [owner for owner in _dm_user_ids(thread) if owner != me]
+            if others == [user_id] and thread.get("dm_id"):
+                return str(thread["dm_id"])
+        try:
+            return await graphql.create_dm(user_id)
+        except ProviderAuthError as exc:
+            raise ValidationFailed(str(exc.message)) from exc
+        except ProviderError as exc:
+            raise ValidationFailed(str(exc.message)) from exc
+
     async def propose_trade(self, league: League, give: list[UUID], receive: list[UUID]) -> ProposeTradeResponse:
         """Send a player trade offer to one other manager. It is not accepted here."""
         if league.provider != Provider.SLEEPER:
@@ -417,6 +604,26 @@ class SleeperWriteService:
             raise ValidationFailed(str(exc.message)) from exc
 
         status = str(tx.get("status") or "pending")
+        if tx.get("transaction_id"):
+            await self.transactions.upsert(
+                league_id=league.id,
+                external_transaction_id=str(tx["transaction_id"]),
+                type="trade",
+                status=status,
+                week=league.current_week,
+                created_at=datetime.now(UTC),
+                details={
+                    "adds": [_trade_player(entry, team) for entry in receive_entries]
+                    + [_trade_player(entry, opponent) for entry in give_entries],
+                    "drops": [_trade_player(entry, team) for entry in give_entries]
+                    + [_trade_player(entry, opponent) for entry in receive_entries],
+                    "team_ids": [str(team.id), str(opponent.id)],
+                    "team_names": [team.name, opponent.name],
+                    "faab_bid": None,
+                    "draft_picks": [],
+                },
+            )
+            await self.session.commit()
         sent = ", ".join(entry.player.name for entry in give_entries)
         got = ", ".join(entry.player.name for entry in receive_entries)
         return ProposeTradeResponse(
@@ -743,6 +950,165 @@ def _player_view(entry: RosterEntry) -> PlayerOut:
         fantasy_positions=list(player.fantasy_positions or []),
         nfl_team=player.nfl_team,
     )
+
+
+def _dm_user_ids(thread: dict) -> list[str]:
+    users = thread.get("recent_users") or []
+    if isinstance(users, str):
+        try:
+            users = json.loads(users)
+        except ValueError:
+            return []
+    if not isinstance(users, list):
+        return []
+    return [str(user.get("user_id")) for user in users if isinstance(user, dict) and user.get("user_id")]
+
+
+def _millis(value) -> datetime | None:
+    if not value:
+        return None
+    return datetime.fromtimestamp(int(value) / 1000, tz=UTC)
+
+
+_MENTION = re.compile(r"<@([^>]+)>")
+
+
+def _plain_text(text: str) -> str:
+    return _MENTION.sub(lambda match: f"@{match.group(1)}", text).strip()
+
+
+def _player_name(raw: dict) -> ChatTradePlayer | None:
+    first = str(raw.get("first_name") or "").strip()
+    last = str(raw.get("last_name") or "").strip()
+    name = str(raw.get("full_name") or " ".join(part for part in (first, last) if part)).strip()
+    if not name:
+        return None
+    position = raw.get("position")
+    player_id = raw.get("player_id")
+    headshot = (
+        f"https://sleepercdn.com/content/nfl/players/{player_id}.jpg"
+        if player_id and str(player_id).isdigit()
+        else None
+    )
+    return ChatTradePlayer(name=name, position=str(position) if position else None, headshot_url=headshot)
+
+
+def _pick_label(raw: object) -> str | None:
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    if not isinstance(raw, dict):
+        return None
+    season = raw.get("season")
+    rnd = raw.get("round")
+    if season and rnd:
+        return f"{season} round {rnd}"
+    if rnd:
+        return f"round {rnd}"
+    return None
+
+
+def _trade_card(attachment: object, user_id: str | None) -> ChatTrade | None:
+    if not isinstance(attachment, dict) or attachment.get("type") != "transactions":
+        return None
+    data = attachment.get("data") or []
+    item = data[0] if isinstance(data, list) and data and isinstance(data[0], dict) else None
+    if item is None or item.get("type") != "trade":
+        return None
+    by_roster = item.get("transactions_by_roster") or {}
+    if not isinstance(by_roster, dict):
+        return None
+    sides: list[ChatTradeSide] = []
+    status = "pending"
+    involves_user = False
+    for side in by_roster.values():
+        if not isinstance(side, dict):
+            continue
+        status = str(side.get("status") or status)
+        user = side.get("user") if isinstance(side.get("user"), dict) else {}
+        if user_id and str(user.get("user_id") or "") == user_id:
+            involves_user = True
+        receives = [player for raw in side.get("adds") or [] if isinstance(raw, dict) and (player := _player_name(raw))]
+        picks = [label for raw in side.get("added_picks") or [] if (label := _pick_label(raw))]
+        if not receives and not picks:
+            continue
+        sides.append(
+            ChatTradeSide(
+                manager=str(user.get("display_name") or "Manager"),
+                receives=receives,
+                picks=picks,
+            )
+        )
+    if not sides:
+        return None
+    return ChatTrade(
+        status=status,
+        transaction_id=str(item["transaction_id"]) if item.get("transaction_id") else None,
+        involves_user=involves_user,
+        sides=sides,
+    )
+
+
+def _name_list(parts: list[str]) -> str:
+    names = [part for part in parts if part]
+    if not names:
+        return "nothing"
+    if len(names) == 1:
+        return names[0]
+    return ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def _trade_text(trade: ChatTrade) -> str:
+    """Say which players moved, so the line is the offer and not only that one exists."""
+    if len(trade.sides) == 1:
+        side = trade.sides[0]
+        got = _name_list([player.name for player in side.receives] + side.picks)
+        verb = "would receive" if trade.status == "pending" else "received"
+        return f"{side.manager} {verb} {got}"
+    first, second = trade.sides[0], trade.sides[1]
+    first_gets = _name_list([player.name for player in first.receives] + first.picks)
+    second_gets = _name_list([player.name for player in second.receives] + second.picks)
+    if trade.status == "pending":
+        return f"{first.manager} offered {second_gets} to {second.manager} for {first_gets}"
+    if trade.status == "complete":
+        return f"{first.manager} traded {second_gets} to {second.manager} for {first_gets}"
+    return f"{first.manager} and {second.manager} updated a trade: {second_gets} for {first_gets}"
+
+
+def _chat_messages(rows: list[dict], user_id: str | None) -> list[LeagueMessageOut]:
+    messages: list[LeagueMessageOut] = []
+    for row in rows:
+        author_name = str(row.get("author_display_name") or "Manager")
+        trade = _trade_card(row.get("attachment"), user_id)
+        if trade is not None and not trade.involves_user:
+            continue
+        text = _trade_text(trade) if trade is not None else _plain_text(str(row.get("text") or ""))
+        if not text:
+            continue
+        when = _millis(row.get("created")) or datetime.now(UTC)
+        author_id = str(row.get("author_id") or "")
+        messages.append(
+            LeagueMessageOut(
+                id=str(row.get("message_id") or when.timestamp()),
+                author_name=author_name,
+                text=text,
+                created_at=when,
+                pinned=bool(row.get("pinned")),
+                mine=bool(user_id and author_id == user_id),
+                trade=trade,
+            )
+        )
+    messages.sort(key=lambda item: item.created_at)
+    return messages
+
+
+def _trade_player(entry: RosterEntry, team) -> dict:
+    return {
+        "player_id": str(entry.player_id),
+        "player_name": entry.player.name,
+        "position": entry.player.position,
+        "team_id": str(team.id),
+        "team_name": team.name,
+    }
 
 
 def _sleeper_id(entry: RosterEntry) -> str:

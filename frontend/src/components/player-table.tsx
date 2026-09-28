@@ -45,7 +45,7 @@ export function PlayerTable({
             return (
               <tr
                 key={p.id}
-                className={cn("transition", onSelect && "cursor-pointer hover:bg-surface-overlay/60", selected && "bg-brand-soft/30")}
+                className={cn("transition-colors hover:bg-surface-overlay/50", onSelect && "cursor-pointer", selected && "bg-brand-soft/30")}
                 onClick={onSelect ? () => onSelect(p) : undefined}
                 data-testid="player-row"
               >

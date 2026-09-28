@@ -20,6 +20,20 @@ class RosterRepository:
         )
         return list(result.scalars().unique().all())
 
+    async def find_player(self, league_id: UUID, player_id: UUID, week: int) -> RosterEntry | None:
+        result = await self.session.execute(
+            select(RosterEntry)
+            .join(FantasyTeam, FantasyTeam.id == RosterEntry.fantasy_team_id)
+            .where(
+                FantasyTeam.league_id == league_id,
+                RosterEntry.player_id == player_id,
+                RosterEntry.week == week,
+            )
+            .options(joinedload(RosterEntry.team))
+            .limit(1)
+        )
+        return result.scalars().unique().first()
+
     async def list_for_league(self, league_id: UUID, week: int) -> list[RosterEntry]:
         result = await self.session.execute(
             select(RosterEntry)

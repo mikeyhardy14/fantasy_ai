@@ -80,6 +80,66 @@ mutation($league_id: Snowflake!, $roster_id: Int!, $leg: Int!, $adds: [Map]!, $d
 }
 """.strip()
 
+LEAGUE_MESSAGES = """
+query($parent_id: String!) {
+  messages(parent_id: $parent_id) {
+    message_id
+    created
+    author_id
+    author_display_name
+    text
+    attachment
+    pinned
+  }
+}
+""".strip()
+
+MY_DMS = """
+query {
+  my_dms {
+    dm_id
+    title
+    dm_type
+    last_message_time
+    recent_users
+  }
+}
+""".strip()
+
+CREATE_DM = """
+mutation($dm_type: String!, $members: [Snowflake!]!) {
+  create_dm(dm_type: $dm_type, members: $members) {
+    dm_id
+  }
+}
+""".strip()
+
+ACCEPT_TRADE = """
+mutation($leg: Int!, $league_id: Snowflake!, $transaction_id: Snowflake!) {
+  accept_trade(leg: $leg, league_id: $league_id, transaction_id: $transaction_id) {
+    transaction_id
+    status
+  }
+}
+""".strip()
+
+REJECT_TRADE = """
+mutation($leg: Int!, $league_id: Snowflake!, $transaction_id: Snowflake!) {
+  reject_trade(leg: $leg, league_id: $league_id, transaction_id: $transaction_id) {
+    transaction_id
+    status
+  }
+}
+""".strip()
+
+CREATE_MESSAGE = """
+mutation($parent_id: Snowflake!, $parent_type: String!, $text: String!) {
+  create_message(parent_id: $parent_id, parent_type: $parent_type, text: $text) {
+    message_id
+  }
+}
+""".strip()
+
 READ_ROSTERS = """
 query($league_id: Snowflake!) {
   league_rosters(league_id: $league_id) {
@@ -200,17 +260,21 @@ class SleeperGraphQL:
         give_player_ids: list[str],
         receive_player_ids: list[str],
     ) -> dict[str, Any]:
-        """Offer players to one other roster. Adds land on us; drops land on them."""
+        """Offer players to one other roster.
+
+        Sleeper pairs each player id with a roster id. A drop's roster is the
+        team that owns that player now. An add's roster is the team that receives him.
+        """
         if not give_player_ids or not receive_player_ids:
             raise ProviderError("Sleeper was not given both sides of a trade.", provider="sleeper")
         data = await self.execute(
             PROPOSE_TRADE,
             {
                 "league_id": league_id,
-                "k_adds": receive_player_ids,
-                "v_adds": [my_roster_id] * len(receive_player_ids),
-                "k_drops": give_player_ids,
-                "v_drops": [their_roster_id] * len(give_player_ids),
+                "k_adds": [*receive_player_ids, *give_player_ids],
+                "v_adds": [my_roster_id] * len(receive_player_ids) + [their_roster_id] * len(give_player_ids),
+                "k_drops": [*give_player_ids, *receive_player_ids],
+                "v_drops": [my_roster_id] * len(give_player_ids) + [their_roster_id] * len(receive_player_ids),
                 "waiver_budget": None,
             },
         )
@@ -246,6 +310,54 @@ class SleeperGraphQL:
         if not isinstance(tx, dict):
             raise ProviderError("Sleeper did not confirm the roster move.", provider="sleeper")
         return tx
+
+    async def league_messages(self, league_id: str) -> list[dict[str, Any]]:
+        """The league message board. Every manager in the league can read it."""
+        return await self.thread_messages(league_id)
+
+    async def my_dms(self) -> list[dict[str, Any]]:
+        """Direct threads the signed-in account belongs to."""
+        data = await self.execute(MY_DMS)
+        rows = data.get("my_dms")
+        if rows is None:
+            return []
+        if not isinstance(rows, list):
+            raise ProviderError("Sleeper did not return your direct chats.", provider="sleeper")
+        return [row for row in rows if isinstance(row, dict)]
+
+    async def thread_messages(self, parent_id: str) -> list[dict[str, Any]]:
+        data = await self.execute(LEAGUE_MESSAGES, {"parent_id": parent_id})
+        rows = data.get("messages")
+        if rows is None:
+            return []
+        if not isinstance(rows, list):
+            raise ProviderError("Sleeper did not return that conversation.", provider="sleeper")
+        return [row for row in rows if isinstance(row, dict)]
+
+    async def create_dm(self, user_id: str) -> str:
+        data = await self.execute(CREATE_DM, {"dm_type": "single", "members": [user_id]})
+        created = data.get("create_dm")
+        if not isinstance(created, dict) or not created.get("dm_id"):
+            raise ProviderError("Sleeper did not open that chat.", provider="sleeper")
+        return str(created["dm_id"])
+
+    async def respond_trade(self, *, league_id: str, transaction_id: str, week: int, accept: bool) -> dict[str, Any]:
+        query = ACCEPT_TRADE if accept else REJECT_TRADE
+        data = await self.execute(
+            query,
+            {"leg": week, "league_id": league_id, "transaction_id": transaction_id},
+        )
+        key = "accept_trade" if accept else "reject_trade"
+        result = data.get(key)
+        if not isinstance(result, dict):
+            raise ProviderError("Sleeper did not confirm the trade response.", provider="sleeper")
+        return result
+
+    async def send_message(self, parent_id: str, parent_type: str, text: str) -> None:
+        await self.execute(
+            CREATE_MESSAGE,
+            {"parent_id": parent_id, "parent_type": parent_type, "text": text},
+        )
 
     async def set_reserve(self, *, league_id: str, roster_id: int, reserve: list[str]) -> None:
         await self.execute(

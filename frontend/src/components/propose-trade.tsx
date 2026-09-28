@@ -40,7 +40,7 @@ export function ProposeTradeDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="propose-trade-title"
-        className="sheet-enter relative z-10 w-full max-w-lg border border-surface-border bg-surface-raised shadow-card"
+        className="sheet-enter relative z-10 w-full max-w-lg rounded-lg border border-surface-border bg-surface-raised shadow-card"
       >
         <div className="border-b border-surface-border px-5 py-4">
           <h2 id="propose-trade-title" className="font-serif text-xl text-slate-100">

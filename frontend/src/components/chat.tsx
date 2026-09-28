@@ -12,6 +12,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Send } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import ReactMarkdown from "react-markdown";
+import { useToast } from "./toast";
 import { Button } from "./ui/button";
 import { InlineError } from "./ui/states";
 
@@ -30,14 +31,13 @@ interface Entry extends ChatMessage {
   generated_by?: string;
   actions?: LineupAction[];
   claims?: RosterClaim[];
-  subResults?: string[];
   subError?: string;
-  claimResults?: string[];
   claimError?: string;
   autoChecked?: boolean;
 }
 
 export function Chat({ leagueId, aiEnabled }: { leagueId: string; aiEnabled: boolean | undefined }) {
+  const toast = useToast();
   const standings = useStandings(leagueId);
   const teams: MentionTeam[] = (standings.data ?? [])
     .filter((team) => !team.is_user_team)
@@ -137,13 +137,13 @@ export function Chat({ leagueId, aiEnabled }: { leagueId: string; aiEnabled: boo
         slot_index: action.slot_index,
       }),
     onSuccess: (resp, action) => {
+      toast(resp.message);
       setMessages((current) =>
         current.map((entry) =>
           entry.actions?.some((item) => sameMove(item, action))
             ? {
                 ...entry,
                 actions: entry.actions.filter((item) => !sameMove(item, action)),
-                subResults: [...(entry.subResults ?? []), resp.message],
                 subError: undefined,
               }
             : entry,
@@ -187,13 +187,13 @@ export function Chat({ leagueId, aiEnabled }: { leagueId: string; aiEnabled: boo
         ...(item.drop_player_id ? { drop_player_id: item.drop_player_id } : {}),
       }),
     onSuccess: (resp, item) => {
+      toast(resp.message);
       setMessages((current) =>
         current.map((entry) =>
           entry.claims?.some((row) => sameClaim(row, item))
             ? {
                 ...entry,
                 claims: entry.claims.filter((row) => !sameClaim(row, item)),
-                claimResults: [...(entry.claimResults ?? []), resp.message],
                 claimError: undefined,
               }
             : entry,
@@ -212,34 +212,22 @@ export function Chat({ leagueId, aiEnabled }: { leagueId: string; aiEnabled: boo
   });
 
   function declineClaim(item: RosterClaim) {
-    const note = item.add_player_name
-      ? `Left ${item.add_player_name} on waivers.`
-      : `Kept ${item.drop_player_name ?? "that player"}.`;
+    toast(item.add_player_name ? `Left ${item.add_player_name} on waivers.` : `Kept ${item.drop_player_name ?? "that player"}.`);
     setMessages((current) =>
       current.map((entry) =>
         entry.claims?.some((row) => sameClaim(row, item))
-          ? {
-              ...entry,
-              claims: entry.claims.filter((row) => !sameClaim(row, item)),
-              claimResults: [...(entry.claimResults ?? []), note],
-            }
+          ? { ...entry, claims: entry.claims.filter((row) => !sameClaim(row, item)) }
           : entry,
       ),
     );
   }
 
   function decline(action: LineupAction) {
-    const note = action.replaces
-      ? `Left ${action.replaces} in the lineup.`
-      : `Skipped starting ${action.player_name}.`;
+    toast(action.replaces ? `Left ${action.replaces} in the lineup.` : `Skipped starting ${action.player_name}.`);
     setMessages((current) =>
       current.map((entry) =>
         entry.actions?.some((item) => sameMove(item, action))
-          ? {
-              ...entry,
-              actions: entry.actions.filter((item) => !sameMove(item, action)),
-              subResults: [...(entry.subResults ?? []), note],
-            }
+          ? { ...entry, actions: entry.actions.filter((item) => !sameMove(item, action)) }
           : entry,
       ),
     );
@@ -306,7 +294,7 @@ export function Chat({ leagueId, aiEnabled }: { leagueId: string; aiEnabled: boo
               id="team-mentions"
               role="listbox"
               aria-label="Teams"
-              className="absolute bottom-12 left-0 z-10 max-h-56 w-full max-w-sm overflow-y-auto border border-surface-border bg-surface-raised shadow-card"
+              className="menu-enter absolute bottom-12 left-0 z-10 max-h-56 w-full max-w-sm overflow-y-auto rounded-lg border border-surface-border bg-surface-raised shadow-card"
             >
               {matches.length ? (
                 matches.map((team, index) => (
@@ -469,12 +457,6 @@ function Bubble({
             ))}
           </div>
         ) : null}
-        {entry.subResults?.map((result) => (
-          <p key={result} className="mt-2 text-xs text-slate-300" data-testid="sub-result">{result}</p>
-        ))}
-        {entry.claimResults?.map((result) => (
-          <p key={result} className="mt-2 text-xs text-slate-300" data-testid="claim-result">{result}</p>
-        ))}
         {entry.subError ? <p className="mt-2 text-xs text-red-700" data-testid="sub-error">{entry.subError}</p> : null}
         {entry.claimError ? <p className="mt-2 text-xs text-red-700" data-testid="claim-error">{entry.claimError}</p> : null}
         {!isUser && entry.tools_used?.length ? (

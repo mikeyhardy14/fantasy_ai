@@ -2,7 +2,8 @@
 
 import { useAuth } from "@/lib/auth";
 import { useLeague } from "@/lib/league";
-import { cn, PROVIDER_LABELS } from "@/lib/utils";
+import { useTeam } from "@/lib/queries";
+import { cn } from "@/lib/utils";
 import { LogOut, Menu, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -10,44 +11,66 @@ import { useState } from "react";
 import { Brand } from "./brand";
 import { Select } from "./ui/input";
 
-export const NAV = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/multibox", label: "Multi-Box" },
-  { href: "/team", label: "My Team" },
-  { href: "/matchup", label: "Matchup" },
-  { href: "/teams", label: "Teams" },
-  { href: "/players", label: "Players" },
-  { href: "/waivers", label: "Waivers" },
-  { href: "/trades", label: "Trades" },
-  { href: "/assistant", label: "Assistant" },
-  { href: "/settings", label: "Settings" },
+const NAV = [
+  {
+    label: "This week",
+    items: [
+      { href: "/dashboard", label: "Dashboard" },
+      { href: "/team", label: "My Team" },
+      { href: "/multibox", label: "Multi-Box" },
+      { href: "/players", label: "Players" },
+    ],
+  },
+  {
+    label: "League",
+    items: [
+      { href: "/teams", label: "Teams" },
+      { href: "/trades", label: "Trades" },
+      { href: "/messages", label: "Chat" },
+    ],
+  },
+  {
+    label: "Desk",
+    items: [
+      { href: "/assistant", label: "Assistant" },
+      { href: "/settings", label: "Settings" },
+    ],
+  },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
   const { user, logout } = useAuth();
   const { leagues, selected, select } = useLeague();
+  const team = useTeam(selected?.id);
   const [open, setOpen] = useState(false);
 
   const nav = (
-    <nav className="flex-1 space-y-0.5 px-3">
-      {NAV.map(({ href, label }) => {
-        const active = pathname === href || pathname.startsWith(`${href}/`);
-        return (
-          <Link
-            key={href}
-            href={href}
-            onClick={() => setOpen(false)}
-            className={cn(
-              "block border-l-2 px-3 py-1.5 text-sm transition-colors",
-              active ? "border-amber-400 bg-brand-soft font-medium text-slate-100" : "border-transparent text-slate-400 hover:bg-surface-overlay hover:text-slate-100",
-            )}
-            aria-current={active ? "page" : undefined}
-          >
-            {label}
-          </Link>
-        );
-      })}
+    <nav className="flex-1 space-y-4 overflow-y-auto px-3 pb-4">
+      {NAV.map((group) => (
+        <div key={group.label}>
+          <p className="mb-1 px-3 text-[11px] font-medium uppercase tracking-wide text-slate-500">{group.label}</p>
+          <div className="space-y-0.5">
+            {group.items.map(({ href, label }) => {
+              const active = pathname === href || pathname.startsWith(`${href}/`);
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  onClick={() => setOpen(false)}
+                  className={cn(
+                    "block border-l-2 px-3 py-1.5 text-sm transition-colors",
+                    active ? "border-amber-400 bg-brand-soft font-medium text-slate-100" : "border-transparent text-slate-400 hover:bg-surface-overlay hover:text-slate-100",
+                  )}
+                  aria-current={active ? "page" : undefined}
+                >
+                  {label}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </nav>
   );
 
@@ -68,14 +91,11 @@ export function Sidebar() {
         </Link>
       )}
       {selected ? (
-        <div className="mt-2 flex items-center justify-between gap-2 px-1 text-[11px] text-slate-500">
-          <span>
-            {PROVIDER_LABELS[selected.provider] ?? selected.provider} · Week {selected.current_week}
-          </span>
-          <Link href="/multibox" className="shrink-0 text-brand hover:underline">
-            All teams
-          </Link>
-        </div>
+        <p className="mt-2 px-1 font-serif text-lg tabular-nums text-slate-100">
+          Week {selected.current_week}
+          <span className="mx-1.5 text-slate-600">·</span>
+          {team.data?.team.record ?? "—"}
+        </p>
       ) : null}
     </div>
   );

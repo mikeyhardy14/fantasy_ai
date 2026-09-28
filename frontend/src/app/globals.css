@@ -55,12 +55,18 @@ h3 {
   animation: paper-shimmer 1.5s ease-in-out infinite;
 }
 
-tbody tr {
-  transition: background-color 180ms cubic-bezier(0.22, 1, 0.36, 1);
+@keyframes score-flash {
+  0%,
+  40% {
+    color: #f0c56a;
+  }
+  100% {
+    color: inherit;
+  }
 }
 
-tbody tr:hover {
-  background-color: rgba(58, 170, 92, 0.12);
+.score-flash {
+  animation: score-flash 700ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @keyframes page-enter {
