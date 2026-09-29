@@ -1,4 +1,4 @@
-import { MatchupCompare } from "@/components/matchup-compare";
+import { MatchupCompare } from "@/components/matchup/matchup-compare";
 import type { NflGame } from "@/lib/types";
 import { render, screen } from "@testing-library/react";
 import { player, slot } from "./fixtures";
@@ -30,6 +30,7 @@ describe("MatchupCompare", () => {
     );
     expect(screen.getByTestId("start-call")).toHaveTextContent("64% start");
     expect(screen.getByLabelText("You are ahead")).toBeInTheDocument();
+    expect(screen.getByTestId("edge")).toHaveTextContent("5.0");
   });
 
   it("hides the range once the game has started", () => {
@@ -68,6 +69,36 @@ describe("MatchupCompare", () => {
     expect(screen.queryByText(/^pts$/i)).toBeNull();
   });
 
+  it("marks the side that has the ball as on the field", () => {
+    const live = [{ ...pregame[0], state: "in" as const }];
+    render(
+      <MatchupCompare
+        week={4}
+        yours={[
+          slot({ slot: "WR", slot_index: 2, player: player({ name: "On Ball", nfl_team: "KC", position: "WR", schedule: live }) }),
+          slot({ slot: "DEF", slot_index: 8, player: player({ name: "Chiefs D", nfl_team: "KC", position: "DEF", schedule: live }) }),
+        ]}
+        theirs={[
+          slot({ slot: "WR", slot_index: 2, player: player({ name: "Waiting", nfl_team: "DAL", position: "WR", schedule: [{ ...pregame[0], state: "pre" }] }) }),
+          slot({ slot: "DEF", slot_index: 8, player: player({ name: "Done D", nfl_team: "LAR", position: "DEF", schedule: [{ ...pregame[0], state: "post" }] }) }),
+        ]}
+        yourName="Us"
+        theirName="Them"
+        games={[
+          { ...game, possession: "KC" },
+          { away: "DAL", home: "PHI", away_score: null, home_score: null, state: "pre", detail: "Sun 1:00", summary: null, broadcast: null },
+          { away: "SEA", home: "LAR", away_score: 3, home_score: 20, state: "post", detail: "Final", summary: null, broadcast: null },
+        ]}
+      />,
+    );
+    const marks = screen.getAllByTestId("play-status");
+    expect(marks.find((mark) => mark.textContent === "On field")).toBeTruthy();
+    expect(marks.filter((mark) => mark.textContent === "In game").length).toBeGreaterThan(0);
+    expect(marks.find((mark) => mark.textContent === "Yet to play")).toBeTruthy();
+    expect(marks.find((mark) => mark.textContent === "Final")).toBeTruthy();
+    expect(screen.getAllByTestId("matchup-row")[0]).toHaveAttribute("data-phase", "field");
+  });
+
   it("says Final under the points once that game is over this week", () => {
     const done = [{ ...pregame[0], state: "post" as const }];
     render(
@@ -80,7 +111,7 @@ describe("MatchupCompare", () => {
         games={[{ ...game, state: "post", detail: "Final" }]}
       />,
     );
-    expect(screen.getByText("Final")).toBeInTheDocument();
+    expect(screen.getAllByText("Final").length).toBeGreaterThan(0);
     expect(screen.queryByTestId("live-stats")).toBeNull();
     expect(screen.queryByText("8:22 - 2nd")).toBeNull();
   });

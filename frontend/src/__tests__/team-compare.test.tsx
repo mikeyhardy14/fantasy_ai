@@ -1,4 +1,4 @@
-import { CompareReadout } from "@/components/team-compare";
+import { CompareReadout } from "@/components/trades/team-compare";
 import type { TeamCompare } from "@/lib/types";
 import { render, screen } from "@testing-library/react";
 

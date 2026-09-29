@@ -1,10 +1,21 @@
-import { MatchupSlate } from "@/components/matchup-slate";
+import { LeagueGames, MatchupSlate } from "@/components/matchup/matchup-slate";
 import type { LeagueMatchup, MatchupSide } from "@/lib/types";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { player, slot } from "./fixtures";
 
-function side(name: string, id: string, points: number): MatchupSide {
+function game(left: string, right: string, yours = false): LeagueMatchup {
+  return {
+    week: 4,
+    is_bye: false,
+    involves_user: yours,
+    status: "upcoming",
+    team: side(left, left, yours ? 10 : 88, `${left} QB`, yours ? 22 : 8),
+    opponent: side(right, right, yours ? 12 : 91, `${right} QB`, yours ? 6 : 28),
+  };
+}
+
+function side(name: string, id: string, points: number, playerName: string, playerPoints: number): MatchupSide {
   return {
     team: {
       id,
@@ -23,18 +34,7 @@ function side(name: string, id: string, points: number): MatchupSide {
     },
     points,
     projected_points: 110,
-    starters: [slot({ slot: "QB", player: player({ name: `${name} QB`, position: "QB" }) })],
-  };
-}
-
-function game(left: string, right: string, yours = false): LeagueMatchup {
-  return {
-    week: 4,
-    is_bye: false,
-    involves_user: yours,
-    status: "upcoming",
-    team: side(left, left, yours ? 10 : 88),
-    opponent: side(right, right, yours ? 12 : 91),
+    starters: [slot({ slot: "QB", player: player({ name: playerName, position: "QB" }), points: playerPoints, stat_line: `${playerPoints} pts` })],
   };
 }
 
@@ -49,5 +49,28 @@ describe("MatchupSlate", () => {
     await user.click(screen.getByRole("button", { name: "Starters" }));
     expect(screen.getByText("Touchdown Titans QB")).toBeInTheDocument();
     expect(screen.getByText("Blitz Brigade QB")).toBeInTheDocument();
+  });
+});
+
+describe("LeagueGames", () => {
+  it("lists every league game, including yours", () => {
+    render(<LeagueGames games={[game("Gridiron Gurus", "Rivals", true), game("Touchdown Titans", "Blitz Brigade")]} week={4} />);
+    expect(screen.getByText("Gridiron Gurus")).toBeInTheDocument();
+    expect(screen.getByText("Touchdown Titans")).toBeInTheDocument();
+    expect(screen.getByTestId("league-games").querySelector('[data-yours="true"]')).toHaveTextContent("Gridiron Gurus");
+    expect(screen.getAllByTestId("league-game")).toHaveLength(2);
+  });
+
+  it("opens a game to compare starters", async () => {
+    const user = userEvent.setup();
+    render(<LeagueGames games={[game("Gridiron Gurus", "Rivals", true), game("Touchdown Titans", "Blitz Brigade")]} week={4} />);
+    await user.click(screen.getByText("Touchdown Titans"));
+    expect(screen.getByTestId("game-score")).toHaveTextContent("88.0");
+    expect(screen.getByTestId("game-score")).toHaveTextContent("91.0");
+    expect(screen.getByText("Playing well")).toBeInTheDocument();
+    expect(screen.getByTestId("hot-list")).toHaveTextContent("Blitz Brigade QB");
+    expect(screen.getByTestId("hot-list")).toHaveTextContent("28.0");
+    expect(screen.getAllByText("Touchdown Titans QB").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Blitz Brigade QB").length).toBeGreaterThan(0);
   });
 });

@@ -1,5 +1,4 @@
-import { PlayerTable } from "@/components/player-table";
-import { rosterPlayers, WaiverAddDialog } from "@/components/waiver-add";
+import { rosterPlayers, WaiverAddDialog } from "@/components/roster/waiver-add";
 import type { Team } from "@/lib/types";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -76,15 +75,5 @@ describe("rosterPlayers", () => {
     } as Team).map((row) => row.player?.name);
 
     expect(names).toEqual(["Quinn Arrow", "Run Back", "Bench Receiver", "Hurt Starter", "Taxi Rookie"]);
-  });
-});
-
-describe("PlayerTable add", () => {
-  it("opens an add from the waiver list", async () => {
-    const user = userEvent.setup();
-    const onAdd = vi.fn();
-    render(<PlayerTable players={[added]} onAdd={onAdd} week={4} />);
-    await user.click(screen.getByTestId("waiver-add"));
-    expect(onAdd).toHaveBeenCalledWith(added);
   });
 });

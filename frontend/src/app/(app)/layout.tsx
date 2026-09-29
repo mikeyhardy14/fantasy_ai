@@ -1,8 +1,9 @@
 "use client";
 
-import { PlayerSheetProvider } from "@/components/player-sheet";
-import { Sidebar } from "@/components/sidebar";
-import { ToastProvider } from "@/components/toast";
+import { PlayerDirectory } from "@/components/player/player-mentions";
+import { PlayerSheetProvider } from "@/components/player/player-sheet";
+import { Sidebar } from "@/components/shell/sidebar";
+import { ToastProvider } from "@/components/shell/toast";
 import { Skeleton } from "@/components/ui/states";
 import { useAuth } from "@/lib/auth";
 import { LeagueProvider } from "@/lib/league";
@@ -43,14 +44,14 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   return (
     <LeagueProvider>
       <ToastProvider>
+        <PlayerDirectory>
         <PlayerSheetProvider>
           <div className="flex min-h-screen flex-col lg:flex-row">
             <Sidebar />
-            <main className="flex-1 min-w-0">
-              <div className="page-enter mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-10 lg:py-10">{children}</div>
-            </main>
+            <main className="min-w-0 flex-1">{children}</main>
           </div>
         </PlayerSheetProvider>
+        </PlayerDirectory>
       </ToastProvider>
     </LeagueProvider>
   );

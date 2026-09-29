@@ -1,11 +1,11 @@
 "use client";
 
-import { irRulesFromSettings, LineupBoard } from "@/components/lineup-board";
-import { LineupEditor } from "@/components/lineup-editor";
-import { useToast } from "@/components/toast";
-import { NoLeague } from "@/components/no-league";
-import { PageHeader } from "@/components/page-header";
-import { RosterTable } from "@/components/roster-table";
+import { irRulesFromSettings, LineupBoard } from "@/components/roster/lineup-board";
+import { LineupEditor } from "@/components/roster/lineup-editor";
+import { useToast } from "@/components/shell/toast";
+import { NoLeague } from "@/components/shell/no-league";
+import { PageHeader } from "@/components/shell/page-header";
+import { RosterTable } from "@/components/roster/roster-table";
 import { PositionBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";

@@ -1,4 +1,4 @@
-import { TransactionList } from "@/components/transaction-list";
+import { TransactionList } from "@/components/trades/transaction-list";
 import type { Transaction } from "@/lib/types";
 import { render, screen } from "@testing-library/react";
 

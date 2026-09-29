@@ -1,10 +1,10 @@
 "use client";
 
-import { irRulesFromSettings } from "@/components/lineup-board";
-import { useToast } from "@/components/toast";
-import { LeagueBox, type LineupMove } from "@/components/league-box";
-import { NoLeague } from "@/components/no-league";
-import { PageHeader } from "@/components/page-header";
+import { irRulesFromSettings } from "@/components/roster/lineup-board";
+import { useToast } from "@/components/shell/toast";
+import { LeagueBox, type LineupMove } from "@/components/roster/league-box";
+import { NoLeague } from "@/components/shell/no-league";
+import { PageHeader } from "@/components/shell/page-header";
 import { Skeleton } from "@/components/ui/states";
 import { api } from "@/lib/api";
 import { useLeague } from "@/lib/league";

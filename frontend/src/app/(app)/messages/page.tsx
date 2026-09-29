@@ -1,16 +1,16 @@
 "use client";
 
-import { AutoReplyNotes } from "@/components/auto-reply-notes";
-import { DirectChatList, DirectThread } from "@/components/direct-chat";
-import { LeagueChat, TradeCard } from "@/components/league-chat";
-import { NoLeague } from "@/components/no-league";
-import { PageHeader } from "@/components/page-header";
+import { AutoReplyNotes } from "@/components/chat/auto-reply-notes";
+import { DirectChatList, DirectThread } from "@/components/chat/direct-chat";
+import { LeagueChat, TradeCard } from "@/components/chat/league-chat";
+import { NoLeague } from "@/components/shell/no-league";
+import { PageHeader } from "@/components/shell/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ErrorState, SkeletonRows } from "@/components/ui/states";
 import { api } from "@/lib/api";
-import { useToast } from "@/components/toast";
+import { useToast } from "@/components/shell/toast";
 import { useLeague } from "@/lib/league";
 import { keys, useAutoReply, useDirectChats, useDirectMessages, useLeagueMessages } from "@/lib/queries";
 import type { DirectChat, LeagueMessage } from "@/lib/types";

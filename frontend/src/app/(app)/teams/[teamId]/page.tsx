@@ -1,9 +1,9 @@
 "use client";
 
-import { NoLeague } from "@/components/no-league";
-import { PageHeader } from "@/components/page-header";
-import { RosterTable } from "@/components/roster-table";
-import { TradeOffer } from "@/components/trade-offer";
+import { NoLeague } from "@/components/shell/no-league";
+import { PageHeader } from "@/components/shell/page-header";
+import { RosterTable } from "@/components/roster/roster-table";
+import { TradeOffer } from "@/components/trades/trade-offer";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Select } from "@/components/ui/input";

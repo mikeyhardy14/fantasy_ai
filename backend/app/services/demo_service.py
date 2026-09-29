@@ -9,7 +9,7 @@ from app.domain.enums import Provider, SyncStatus
 from app.models import League
 from app.nfl_data import LocalFileNFLDataProvider, NFLDataProvider
 from app.repositories import FantasyAccountRepository, LeagueRepository
-from app.seed.demo_league import DEMO_LEAGUE_ID, DEMO_USER, build_snapshot
+from app.services.demo_league import DEMO_LEAGUE_ID, DEMO_USER, build_snapshot
 from app.services.sync_service import SyncService
 
 log = get_logger(__name__)

@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { Button } from "./button";
 
 export function Skeleton({ className }: { className?: string }) {
-  return <div className={cn("paper-skeleton", className)} aria-hidden data-testid="skeleton" />;
+  return <div className={cn("paper-skeleton rounded-lg", className)} aria-hidden data-testid="skeleton" />;
 }
 
 export function SkeletonRows({ rows = 5 }: { rows?: number }) {
@@ -32,10 +32,10 @@ export function EmptyState({
   className?: string;
 }) {
   return (
-    <div className={cn("px-6 py-8", className)}>
+    <div className={cn("px-6 py-10 text-center", className)}>
       {icon ? <div className="mb-2 text-slate-400">{icon}</div> : null}
-      <h3 className="text-lg text-slate-100">{title}</h3>
-      {description ? <p className="mt-1 max-w-sm text-xs text-slate-400">{description}</p> : null}
+      <h3 className="font-sans text-base font-medium tracking-normal text-slate-100">{title}</h3>
+      {description ? <p className="mx-auto mt-1 max-w-sm text-sm leading-relaxed text-slate-400">{description}</p> : null}
       {action ? <div className="mt-4">{action}</div> : null}
     </div>
   );

@@ -41,7 +41,7 @@ from app.repositories import (
     TeamRepository,
     TransactionRepository,
 )
-from app.services.game_look import game_look
+from app.services.game_look import game_look, index_games
 from app.schemas.league import (
     GameLookOut,
     LeagueDetailOut,
@@ -641,6 +641,7 @@ class LeagueContextService:
 
     async def _paint_slot_games(self, league: League, week: int, slots: list[RosterSlotOut]) -> None:
         games, blob = await self._current_board(league, week)
+        by_team = index_games(games)
         scoring = league.scoring_settings or {}
         for slot in slots:
             player = slot.player
@@ -655,6 +656,7 @@ class LeagueContextService:
                 games=games,
                 stats=blob,
                 scoring=scoring,
+                games_by_team=by_team,
             )
             if slot.game and slot.game.stat_line and not slot.stat_line:
                 slot.stat_line = slot.game.stat_line
@@ -676,6 +678,7 @@ class LeagueContextService:
         if not rows:
             return {}
         games, blob = await self._current_board(league, week)
+        by_team = index_games(games)
         people = await self.players.get_many(UUID(row.player.player_id) for row in rows)
         scoring = league.scoring_settings or {}
         looks: dict[str, GameLookOut | None] = {}
@@ -691,6 +694,7 @@ class LeagueContextService:
                 games=games,
                 stats=blob,
                 scoring=scoring,
+                games_by_team=by_team,
             )
         return looks
 
@@ -890,6 +894,9 @@ class LeagueContextService:
                 detail=game.detail,
                 summary=game.summary,
                 broadcast=game.broadcast,
+                possession=game.possession,
+                venue=game.venue,
+                broadcast_market=game.broadcast_market,
             )
             for _, game in ordered
         ]

@@ -1,4 +1,4 @@
-import { OutstandingTrades } from "@/components/outstanding-trades";
+import { OutstandingTrades } from "@/components/trades/outstanding-trades";
 import { render, screen } from "@testing-library/react";
 
 const user = "team-me";

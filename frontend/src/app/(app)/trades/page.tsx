@@ -1,11 +1,13 @@
 "use client";
 
-import { OutstandingTrades } from "@/components/outstanding-trades";
-import { ProposeTradeDialog } from "@/components/propose-trade";
-import { useToast } from "@/components/toast";
-import { NoLeague } from "@/components/no-league";
-import { PageHeader } from "@/components/page-header";
-import { RecommendationList } from "@/components/recommendation-card";
+import { MentionText } from "@/components/player/player-mentions";
+import { PlayerFace } from "@/components/player/player-face";
+import { OutstandingTrades } from "@/components/trades/outstanding-trades";
+import { ProposeTradeDialog } from "@/components/trades/propose-trade";
+import { useToast } from "@/components/shell/toast";
+import { NoLeague } from "@/components/shell/no-league";
+import { PageHeader } from "@/components/shell/page-header";
+import { RecommendationList } from "@/components/advice/recommendation-card";
 import { Badge, PositionBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -238,7 +240,7 @@ function MadeTrades({ leagueId }: { leagueId: string }) {
               </div>
               <ul className="mt-2 space-y-1 text-sm text-slate-300">
                 {receivedLines(trade).map((line) => (
-                  <li key={line}>{line}</li>
+                  <li key={line}><MentionText text={line} /></li>
                 ))}
               </ul>
               {trade.picks?.length ? <p className="mt-2 text-xs text-slate-500">Picks: {trade.picks.join(", ")}</p> : null}
@@ -279,6 +281,7 @@ function PickRow({ p, active, onClick }: { p: Player; active: boolean; onClick: 
     <button onClick={onClick} className={cn("flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm transition hover:bg-surface-overlay", active && "bg-brand-soft/40 ring-1 ring-inset ring-emerald-500/40")}>
       <span className="flex items-center gap-2 min-w-0">
         <PositionBadge position={p.position} />
+        <PlayerFace url={p.headshot_url} name={p.name} size="xs" />
         <span className="truncate text-slate-100">{p.name}</span>
         <span className="text-xs text-slate-500">{p.nfl_team ?? "FA"}</span>
         {p.injury_status ? <Badge className="bg-amber-500/15 text-amber-200 ring-amber-500/30">{p.injury_status}</Badge> : null}
@@ -297,6 +300,7 @@ function Chips({ players, onRemove, empty }: { players: Player[]; onRemove: (p: 
     <span className="flex flex-wrap gap-1">
       {players.map((p) => (
         <span key={p.id} className="inline-flex items-center gap-1 rounded-md bg-surface-overlay px-2 py-1 text-xs text-slate-100 ring-1 ring-inset ring-surface-border">
+          <PlayerFace url={p.headshot_url} name={p.name} size="xs" />
           {p.name}
           <button onClick={() => onRemove(p)} aria-label={`Remove ${p.name}`} className="text-slate-400 hover:text-slate-100"><X className="h-3 w-3" /></button>
         </span>
@@ -323,7 +327,7 @@ function TradeResult({
         action={<Badge className="bg-slate-500/15 text-slate-400 ring-slate-500/30">{generatedBy === "deterministic" ? "Rule-based" : "AI"}</Badge>}
       />
       <CardBody className="space-y-4">
-        <p className="text-sm text-slate-200">{analysis.summary}</p>
+        <p className="text-sm text-slate-200"><MentionText text={analysis.summary} /></p>
         <div className="grid gap-3 sm:grid-cols-2">
           <SideBox label={giveLabel} side={analysis.you_give} />
           <SideBox label={receiveLabel} side={analysis.you_receive} />
@@ -343,7 +347,7 @@ function SideBox({ label, side }: { label: string; side: TradeAnalysis["you_give
       <p className="text-[11px] uppercase tracking-wide text-slate-500">{label}</p>
       <ul className="mt-1 space-y-1 text-sm text-slate-100">
         {side.players.map((p, i) => (
-          <li key={i} className="flex items-center gap-2"><PositionBadge position={side.positions[i]} />{p}{side.injured.includes(p) ? <Badge className="bg-amber-500/15 text-amber-200 ring-amber-500/30">INJ</Badge> : null}</li>
+          <li key={i} className="flex items-center gap-2"><PositionBadge position={side.positions[i]} /><MentionText text={p} />{side.injured.includes(p) ? <Badge className="bg-amber-500/15 text-amber-200 ring-amber-500/30">INJ</Badge> : null}</li>
         ))}
       </ul>
       <p className="mt-2 text-xs text-slate-500">Projected: {formatPoints(side.projected_points)}</p>
@@ -357,7 +361,7 @@ function Section({ title, items, muted }: { title: string; items: string[]; mute
       <p className="mb-1 text-[11px] uppercase tracking-wide text-slate-500">{title}</p>
       <ul className={cn("space-y-1 text-sm", muted ? "text-slate-500" : "text-slate-300")}>
         {items.map((i, k) => (
-          <li key={k}>• {i}</li>
+          <li key={k}>• <MentionText text={i} /></li>
         ))}
       </ul>
     </div>

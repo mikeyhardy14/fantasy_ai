@@ -123,6 +123,7 @@ export interface GameLook {
   home_score: number | null;
   state: "pre" | "in" | "post" | null;
   clock: string | null;
+  possession?: string | null;
 }
 
 export interface RosteredOn {
@@ -269,6 +270,9 @@ export interface NflGame {
   detail: string | null;
   summary: string | null;
   broadcast: string | null;
+  possession?: string | null;
+  venue?: string | null;
+  broadcast_market?: string | null;
 }
 
 export interface Matchup {

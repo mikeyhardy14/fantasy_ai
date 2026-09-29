@@ -1,4 +1,4 @@
-import { LeagueChat } from "@/components/league-chat";
+import { LeagueChat } from "@/components/chat/league-chat";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 

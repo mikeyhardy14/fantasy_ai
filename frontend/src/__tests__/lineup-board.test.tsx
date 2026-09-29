@@ -1,4 +1,4 @@
-import { LineupBoard } from "@/components/lineup-board";
+import { LineupBoard } from "@/components/roster/lineup-board";
 import type { Team } from "@/lib/types";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";

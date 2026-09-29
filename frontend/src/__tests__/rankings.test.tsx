@@ -1,4 +1,4 @@
-import { RankingsTable } from "@/components/rankings-table";
+import { RankingsTable } from "@/components/roster/rankings-table";
 import type { Rankings, Team } from "@/lib/types";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";

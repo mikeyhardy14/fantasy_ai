@@ -1,7 +1,7 @@
-import { AnalysisCards } from "@/components/analysis-cards";
-import { BriefingCard } from "@/components/briefing-card";
-import { RecommendationCard } from "@/components/recommendation-card";
-import { RosterTable } from "@/components/roster-table";
+import { AnalysisCards } from "@/components/advice/analysis-cards";
+import { BriefingCard } from "@/components/advice/briefing-card";
+import { RecommendationCard } from "@/components/advice/recommendation-card";
+import { RosterTable } from "@/components/roster/roster-table";
 import { FlagBadges, PositionBadge } from "@/components/ui/badge";
 import { ErrorState } from "@/components/ui/states";
 import { ApiError } from "@/lib/api";
@@ -68,6 +68,16 @@ describe("RecommendationCard", () => {
     expect(screen.getByText("HIGH")).toBeInTheDocument();
     expect(screen.getByText(recommendation.title)).toBeInTheDocument();
     expect(screen.getByText(recommendation.reason)).toBeInTheDocument();
+  });
+
+  it("can do or disable a suggestion", () => {
+    const onDo = vi.fn();
+    const onDisable = vi.fn();
+    render(<RecommendationCard rec={recommendation} onDo={onDo} onDisable={onDisable} />);
+    screen.getByRole("button", { name: "Do" }).click();
+    expect(onDo).toHaveBeenCalled();
+    screen.getByRole("button", { name: "Disable" }).click();
+    expect(onDisable).toHaveBeenCalled();
   });
 });
 

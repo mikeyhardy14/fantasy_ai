@@ -133,6 +133,7 @@ class GameLookOut(BaseModel):
     home_score: int | None = None
     state: str | None = None  # pre, in, post
     clock: str | None = None
+    possession: str | None = None
 
 
 class PlayerSheetOut(BaseModel):
@@ -251,6 +252,9 @@ class NflGameOut(BaseModel):
     detail: str | None = None
     summary: str | None = None
     broadcast: str | None = None
+    possession: str | None = None
+    venue: str | None = None
+    broadcast_market: str | None = None
 
 
 class MatchupOut(BaseModel):

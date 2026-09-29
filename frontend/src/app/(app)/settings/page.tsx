@@ -1,6 +1,6 @@
 "use client";
 
-import { PageHeader } from "@/components/page-header";
+import { PageHeader } from "@/components/shell/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";

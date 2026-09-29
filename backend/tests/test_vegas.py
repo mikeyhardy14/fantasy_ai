@@ -51,12 +51,14 @@ def test_live_scoreboard_keeps_the_score_and_the_last_play():
                     "competitions": [
                         {
                             "status": {"type": {"state": "in", "shortDetail": "12:08 - 3rd"}},
-                            "broadcasts": [{"names": ["Prime Video"]}],
+                            "broadcasts": [{"names": ["Prime Video"], "market": "national"}],
+                            "venue": {"fullName": "Lambeau Field", "address": {"city": "Green Bay", "state": "WI"}},
                             "competitors": [
-                                {"homeAway": "home", "score": "7", "team": {"abbreviation": "GB"}},
-                                {"homeAway": "away", "score": "17", "team": {"abbreviation": "ATL"}},
+                                {"id": "9", "homeAway": "home", "score": "7", "team": {"id": "9", "abbreviation": "GB"}},
+                                {"id": "1", "homeAway": "away", "score": "17", "team": {"id": "1", "abbreviation": "ATL"}},
                             ],
                             "situation": {
+                                "possession": "1",
                                 "downDistanceText": "1st & 10 at ATL 16",
                                 "lastPlay": {
                                     "text": "Official Timeout at 12:08.",
@@ -75,7 +77,37 @@ def test_live_scoreboard_keeps_the_score_and_the_last_play():
     assert game.state == "in"
     assert game.detail == "12:08 - 3rd"
     assert game.broadcast == "Prime Video"
+    assert game.broadcast_market == "national"
+    assert game.venue == "Green Bay, WI"
     assert game.summary == "Official Timeout at 12:08 · 6 plays, 54 yards, 2:52 · 1st & 10 at ATL 16"
+    assert game.possession == "ATL"
+
+
+def test_live_scoreboard_prefers_the_national_broadcast():
+    rows = parse_game_summaries(
+        {
+            "events": [
+                {
+                    "competitions": [
+                        {
+                            "status": {"type": {"state": "pre", "shortDetail": "Sun 1:00 PM"}},
+                            "geoBroadcasts": [
+                                {"media": {"shortName": "WTMJ"}, "market": {"type": "Home"}},
+                                {"media": {"shortName": "CBS"}, "market": {"type": "National"}},
+                            ],
+                            "competitors": [
+                                {"homeAway": "home", "score": "0", "team": {"abbreviation": "GB"}},
+                                {"homeAway": "away", "score": "0", "team": {"abbreviation": "CHI"}},
+                            ],
+                        }
+                    ]
+                }
+            ]
+        }
+    )
+    game = rows[0]
+    assert game.broadcast == "CBS"
+    assert game.broadcast_market == "national"
 
 
 def _board() -> SeasonBoard:

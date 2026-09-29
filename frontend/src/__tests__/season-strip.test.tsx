@@ -1,4 +1,4 @@
-import { SeasonStrip } from "@/components/player-face";
+import { SeasonStrip } from "@/components/player/player-face";
 import type { ScheduleGame } from "@/lib/types";
 import { render, screen } from "@testing-library/react";
 

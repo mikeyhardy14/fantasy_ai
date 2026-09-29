@@ -1,4 +1,4 @@
-import { LeagueBox } from "@/components/league-box";
+import { LeagueBox } from "@/components/roster/league-box";
 import { leagueInitials, leagueLocation } from "@/lib/league-location";
 import type { League, Matchup, Team } from "@/lib/types";
 import { render, screen } from "@testing-library/react";

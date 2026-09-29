@@ -1,4 +1,4 @@
-import { DirectChatList, DirectThread } from "@/components/direct-chat";
+import { DirectChatList, DirectThread } from "@/components/chat/direct-chat";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 

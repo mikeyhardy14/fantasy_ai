@@ -1,8 +1,8 @@
 "use client";
 
-import { Chat } from "@/components/chat";
-import { NoLeague } from "@/components/no-league";
-import { PageHeader } from "@/components/page-header";
+import { Chat } from "@/components/chat/chat";
+import { NoLeague } from "@/components/shell/no-league";
+import { PageHeader } from "@/components/shell/page-header";
 import { Badge } from "@/components/ui/badge";
 import { SkeletonRows } from "@/components/ui/states";
 import { useLeague } from "@/lib/league";

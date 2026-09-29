@@ -1,12 +1,11 @@
 "use client";
 
-import { NoLeague } from "@/components/no-league";
-import { useToast } from "@/components/toast";
-import { PageHeader } from "@/components/page-header";
-import { PlayerGameLine } from "@/components/player-game";
-import { PlayerName } from "@/components/player-sheet";
-import { RankingsTable, type RankMove } from "@/components/rankings-table";
-import { rosterPlayers, WaiverAddDialog } from "@/components/waiver-add";
+import { NoLeague } from "@/components/shell/no-league";
+import { useToast } from "@/components/shell/toast";
+import { PageHeader } from "@/components/shell/page-header";
+import { DepthChart } from "@/components/player/depth-chart";
+import { RankingsTable, type RankMove } from "@/components/roster/rankings-table";
+import { rosterPlayers, WaiverAddDialog } from "@/components/roster/waiver-add";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Input, Select } from "@/components/ui/input";
@@ -15,11 +14,9 @@ import { api } from "@/lib/api";
 import { useLeague } from "@/lib/league";
 import { keys, useLeagueDetail, useNeeds, useRankings, useTeam, useWaiverSuggestions } from "@/lib/queries";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { RankingRow } from "@/lib/types";
-import { formatPoints } from "@/lib/utils";
 import { Search } from "lucide-react";
 import { useRouter } from "next/navigation";
-import ReactMarkdown from "react-markdown";
+import { FacedMarkdown } from "@/components/player/player-mentions";
 import { useEffect, useState } from "react";
 
 const POSITIONS = ["", "QB", "RB", "WR", "TE", "FLEX", "K", "DEF"];
@@ -205,6 +202,7 @@ function PlayersView({ leagueId, week }: { leagueId: string; week: number }) {
                     }
                   : undefined
               }
+              showGame={!team}
               onTrade={(playerId, side) => router.push(`/trades?${side}=${playerId}`)}
               emptyTitle={narrowing ? "No matches" : "No players"}
               emptyDescription={
@@ -224,7 +222,7 @@ function PlayersView({ leagueId, week }: { leagueId: string; week: number }) {
             action={<Badge className="bg-brand-soft text-emerald-200 ring-brand/30">{source}</Badge>}
           />
           <CardBody className="prose prose-invert max-w-none text-sm text-slate-300">
-            <ReactMarkdown>{suggestions.data.message}</ReactMarkdown>
+            <FacedMarkdown text={suggestions.data.message} />
           </CardBody>
         </Card>
       ) : null}
@@ -244,40 +242,6 @@ function PlayersView({ leagueId, week }: { leagueId: string; week: number }) {
           onKeep={dropRequired ? undefined : () => add.mutate(null)}
         />
       ) : null}
-    </div>
-  );
-}
-
-function DepthChart({ rows, team }: { rows: RankingRow[]; team: string }) {
-  const groups = ["QB", "RB", "WR", "TE", "K", "DEF"]
-    .map((position) => ({
-      position,
-      players: rows
-        .filter((row) => row.position === position)
-        .sort((left, right) => (right.projected_points ?? -1) - (left.projected_points ?? -1) || left.name.localeCompare(right.name)),
-    }))
-    .filter((group) => group.players.length);
-  if (!groups.length) return <p className="text-sm text-slate-500">No {team} players in this list.</p>;
-  return (
-    <div data-testid="depth-chart" className="grid gap-4 sm:grid-cols-2">
-      {groups.map((group) => (
-        <div key={group.position}>
-          <p className="text-[11px] uppercase tracking-wide text-slate-500">{group.position}</p>
-          <ul className="mt-1 space-y-1.5">
-            {group.players.map((row, index) => (
-              <li key={row.player_id} className="text-sm text-slate-200">
-                <span className="text-slate-500">{index + 1}. </span>
-                <PlayerName id={row.player_id} name={row.name} className="font-medium text-slate-100" />
-                <span className="text-slate-400">
-                  {row.injury_status ? ` · ${row.injury_status}` : ""}
-                  {` · Proj ${formatPoints(row.projected_points)}`}
-                </span>
-                <PlayerGameLine game={row.game} />
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
     </div>
   );
 }

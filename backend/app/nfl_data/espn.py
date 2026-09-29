@@ -223,6 +223,9 @@ class GameSummary:
     detail: str | None
     summary: str | None
     broadcast: str | None
+    possession: str | None = None
+    venue: str | None = None
+    broadcast_market: str | None = None
 
 
 def _score(value: object) -> int | None:
@@ -232,6 +235,22 @@ def _score(value: object) -> int | None:
         return int(float(value))  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
+
+
+def _possession(comp: dict, situation: dict) -> str | None:
+    """Team abbreviation that currently has the ball, when ESPN posts it."""
+    token = situation.get("possession")
+    if token is None:
+        return None
+    wanted = str(token)
+    for competitor in comp.get("competitors") or []:
+        team = competitor.get("team") if isinstance(competitor.get("team"), dict) else {}
+        ids = {str(competitor.get("id") or ""), str(team.get("id") or "")}
+        if wanted not in ids:
+            continue
+        abbr = app_team(team.get("abbreviation"))
+        return abbr or None
+    return None
 
 
 def _summary_text(state: str | None, situation: dict) -> str | None:
@@ -274,12 +293,7 @@ def parse_game_summaries(payload: dict) -> list[GameSummary]:
         status = (comp.get("status") or {}).get("type") or {}
         detail = status.get("shortDetail")
         situation = comp.get("situation") if isinstance(comp.get("situation"), dict) else {}
-        broadcasts = comp.get("broadcasts") or []
-        network = None
-        if broadcasts and isinstance(broadcasts[0], dict):
-            names = broadcasts[0].get("names") or []
-            if names:
-                network = str(names[0])
+        network, market = _broadcast(comp)
         rows.append(
             GameSummary(
                 away=away[0],
@@ -290,9 +304,53 @@ def parse_game_summaries(payload: dict) -> list[GameSummary]:
                 detail=detail if isinstance(detail, str) else None,
                 summary=_summary_text(state, situation),
                 broadcast=network,
+                possession=_possession(comp, situation),
+                venue=_venue(comp),
+                broadcast_market=market,
             )
         )
     return rows
+
+
+def _broadcast(comp: dict) -> tuple[str | None, str | None]:
+    """Network name and ESPN market (national, home, away). National listings win."""
+    picked: list[tuple[str, str | None]] = []
+    for geo in comp.get("geoBroadcasts") or []:
+        if not isinstance(geo, dict):
+            continue
+        media = geo.get("media") if isinstance(geo.get("media"), dict) else {}
+        market = geo.get("market") if isinstance(geo.get("market"), dict) else {}
+        name = media.get("shortName") or media.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        loc = str(market.get("type")).lower() if isinstance(market.get("type"), str) else None
+        picked.append((name.strip(), loc))
+    for name, loc in picked:
+        if loc == "national":
+            return name, loc
+    if picked:
+        return picked[0]
+    broadcasts = comp.get("broadcasts") or []
+    if broadcasts and isinstance(broadcasts[0], dict):
+        names = broadcasts[0].get("names") or []
+        market = broadcasts[0].get("market")
+        name = str(names[0]) if names else None
+        loc = str(market).lower() if isinstance(market, str) else None
+        return name, loc
+    return None, None
+
+
+def _venue(comp: dict) -> str | None:
+    venue = comp.get("venue") if isinstance(comp.get("venue"), dict) else {}
+    address = venue.get("address") if isinstance(venue.get("address"), dict) else {}
+    city = address.get("city") if isinstance(address.get("city"), str) else None
+    state = address.get("state") if isinstance(address.get("state"), str) else None
+    if city and state:
+        return f"{city}, {state}"
+    if city:
+        return city
+    name = venue.get("fullName")
+    return name if isinstance(name, str) and name.strip() else None
 
 
 def parse_scoreboard(payload: dict, week: int) -> dict[str, Game]:

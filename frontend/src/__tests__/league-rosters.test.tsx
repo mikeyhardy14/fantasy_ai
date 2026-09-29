@@ -1,4 +1,4 @@
-import { LeagueRosterBoard } from "@/components/league-rosters";
+import { LeagueRosterBoard } from "@/components/roster/league-rosters";
 import type { Team } from "@/lib/types";
 import { render, screen } from "@testing-library/react";
 import { player, slot } from "./fixtures";

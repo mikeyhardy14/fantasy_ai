@@ -1,5 +1,5 @@
-import { ProposeTradeDialog } from "@/components/propose-trade";
-import { ToastProvider, useToast } from "@/components/toast";
+import { ProposeTradeDialog } from "@/components/trades/propose-trade";
+import { ToastProvider, useToast } from "@/components/shell/toast";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";

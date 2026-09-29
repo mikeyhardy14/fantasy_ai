@@ -1,4 +1,4 @@
-import { AutoReplyNotes } from "@/components/auto-reply-notes";
+import { AutoReplyNotes } from "@/components/chat/auto-reply-notes";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 

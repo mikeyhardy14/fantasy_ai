@@ -98,7 +98,7 @@ def start_sit_recommendations(ctx: TeamContext) -> list[Recommendation]:
     recs: list[Recommendation] = []
     for swap in suggest_swaps(ctx.team.starters, ctx.team.bench):
         delta = swap.projection_delta
-        data = {"slot": swap.slot, "projection_delta": delta}
+        data = {"slot": swap.slot, "projection_delta": delta, "slot_index": swap.starter.slot_index}
         recs.append(
             Recommendation(
                 type=RecommendationType.START_SIT,

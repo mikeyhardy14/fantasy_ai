@@ -1,4 +1,4 @@
-import { TradeOffer } from "@/components/trade-offer";
+import { TradeOffer } from "@/components/trades/trade-offer";
 import type { Team } from "@/lib/types";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";

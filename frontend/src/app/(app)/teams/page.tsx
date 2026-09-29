@@ -1,9 +1,9 @@
 "use client";
 
-import { LeagueRosterBoard } from "@/components/league-rosters";
-import { TeamComparePanel } from "@/components/team-compare";
-import { NoLeague } from "@/components/no-league";
-import { PageHeader } from "@/components/page-header";
+import { LeagueRosterBoard } from "@/components/roster/league-rosters";
+import { TeamComparePanel } from "@/components/trades/team-compare";
+import { NoLeague } from "@/components/shell/no-league";
+import { PageHeader } from "@/components/shell/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 import { Input, Select } from "@/components/ui/input";

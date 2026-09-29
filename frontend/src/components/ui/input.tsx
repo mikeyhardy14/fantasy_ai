@@ -9,7 +9,7 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
     <input
       ref={ref}
       className={cn(
-        "h-9 w-full rounded-lg border border-surface-border bg-surface px-3 text-sm text-slate-100 transition-colors placeholder:text-slate-500 focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand",
+        "h-10 w-full rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-slate-100 transition-colors placeholder:text-slate-500 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/40",
         className,
       )}
       {...props}
@@ -21,7 +21,7 @@ export function Select({ className, ...props }: SelectHTMLAttributes<HTMLSelectE
   return (
     <select
       className={cn(
-        "h-9 rounded-lg border border-surface-border bg-surface px-3 text-sm text-slate-100 transition-colors focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand",
+        "h-10 cursor-pointer rounded-lg border border-white/10 bg-surface-overlay px-3 text-sm text-slate-100 transition-colors focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/40",
         className,
       )}
       {...props}
