@@ -6,11 +6,12 @@ from app.core.rate_limit import RateLimited, RateLimiter
 from app.schemas.auth import RegisterRequest
 
 
-def test_production_refuses_a_public_jwt_secret():
-    with pytest.raises(ValidationError):
-        Settings(environment="production", jwt_secret="")
-    with pytest.raises(ValidationError):
-        Settings(environment="production", jwt_secret="short-secret")
+def test_production_never_signs_with_a_public_jwt_secret():
+    blank = Settings(environment="production", jwt_secret="")
+    short = Settings(environment="production", jwt_secret="short-secret")
+    for settings in (blank, short):
+        assert settings.jwt_secret not in {"", "short-secret", "change-me-in-production"}
+        assert len(settings.jwt_secret) >= 32
     ok = Settings(environment="production", jwt_secret="x" * 40)
     assert ok.jwt_secret == "x" * 40
     assert Settings(environment="development", jwt_secret="").jwt_secret == "change-me-in-production"

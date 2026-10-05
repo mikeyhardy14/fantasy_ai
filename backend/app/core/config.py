@@ -1,3 +1,5 @@
+import secrets
+import sys
 from functools import lru_cache
 from pathlib import Path
 
@@ -73,13 +75,16 @@ class Settings(BaseSettings):
     demo_enabled: bool = True
 
     @model_validator(mode="after")
-    def refuse_public_jwt_secret(self) -> "Settings":
+    def replace_public_jwt_secret(self) -> "Settings":
         if self.is_local:
             return self
         if self.jwt_secret in KNOWN_JWT_DEFAULTS or len(self.jwt_secret) < 32:
-            raise ValueError(
-                "JWT_SECRET must be set to a random value of at least 32 characters outside development."
+            print(
+                "WARNING: JWT_SECRET is missing or weak; using a random secret for this process. "
+                "Sessions end on every restart until JWT_SECRET is set to 32+ random characters.",
+                file=sys.stderr,
             )
+            self.jwt_secret = secrets.token_urlsafe(48)
         return self
 
     @property
