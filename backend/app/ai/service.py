@@ -116,7 +116,7 @@ class AIService:
             return TeamAnalysisResponse(analysis=analysis, recommendations=rec_out, generated_by="deterministic")
 
         messages = [await self._system(ctx), {"role": "user", "content": prompts.ANALYSIS_INSTRUCTIONS}]
-        result = await self._agent().run(messages, ctx, response_model=TeamAnalysis, temperature=0.2)
+        result = await self._advice_agent().run(messages, ctx, response_model=TeamAnalysis, temperature=0.2)
         assert isinstance(result.structured, TeamAnalysis)
         analysis = fallback.omit_false_season_gap(result.structured, tc)
         return TeamAnalysisResponse(
@@ -288,7 +288,7 @@ class AIService:
             {"role": "system", "content": prompts.TRADE_INSTRUCTIONS},
             {"role": "user", "content": f"Trade facts:\n{facts}"},
         ]
-        result = await self._agent().run(messages, ctx, response_model=TradeAnalysis, temperature=0.2)
+        result = await self._advice_agent().run(messages, ctx, response_model=TradeAnalysis, temperature=0.2)
         assert isinstance(result.structured, TradeAnalysis)
         return TradeAnalysisResponse(analysis=result.structured, generated_by=self._generated_by())
 

@@ -99,7 +99,14 @@ function faceChildren(children: ReactNode) {
 export function FacedMarkdown({ text }: { text: string }) {
   return (
     <ReactMarkdown
+      disallowedElements={["img"]}
+      unwrapDisallowed
       components={{
+        a: ({ href, children }) => (
+          <a href={href} target="_blank" rel="noopener noreferrer nofollow">
+            {children}
+          </a>
+        ),
         p: ({ children }) => <p>{faceChildren(children)}</p>,
         li: ({ children }) => <li>{faceChildren(children)}</li>,
         strong: ({ children }) => <strong>{faceChildren(children)}</strong>,

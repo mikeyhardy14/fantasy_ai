@@ -128,8 +128,8 @@ export function LeagueBox({
         <Link href="/team" onClick={onSelect} className="text-slate-300 hover:text-slate-100 hover:underline">
           Roster
         </Link>
-        <Link href="/dashboard" onClick={onSelect} className="text-slate-300 hover:text-slate-100 hover:underline">
-          Dashboard
+        <Link href="/league" onClick={onSelect} className="text-slate-300 hover:text-slate-100 hover:underline">
+          League view
         </Link>
       </div>
 

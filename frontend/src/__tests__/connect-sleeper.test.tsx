@@ -97,7 +97,7 @@ describe("Connect Sleeper import all", () => {
     refetch.mockReset();
   });
 
-  it("imports every pending league and opens Multi-Box", async () => {
+  it("imports every pending league and opens the dashboard", async () => {
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
       const path = String(url);
       if (path.endsWith("/api/integrations/accounts")) return json([account]);
@@ -128,7 +128,7 @@ describe("Connect Sleeper import all", () => {
       expect(call).toBeTruthy();
     });
     await waitFor(() => expect(select).toHaveBeenCalledWith("league-1"));
-    expect(push).toHaveBeenCalledWith("/multibox");
+    expect(push).toHaveBeenCalledWith("/dashboard");
     expect(refetch).toHaveBeenCalled();
   });
 

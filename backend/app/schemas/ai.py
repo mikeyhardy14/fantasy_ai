@@ -96,8 +96,8 @@ class LineupAction(BaseModel):
     player_name: str
     position: str | None = None
     headshot_url: str | None = None
-    destination: Literal["starter"] = "starter"
-    slot_index: int
+    destination: Literal["starter", "bench", "ir"] = "starter"
+    slot_index: int | None = None
     slot: str
     week: int
     replaces: str | None = None

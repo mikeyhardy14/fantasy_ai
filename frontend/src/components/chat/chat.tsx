@@ -134,7 +134,7 @@ export function Chat({ leagueId, aiEnabled, dock = false }: { leagueId: string; 
         week: action.week,
         player_id: action.player_id,
         destination: action.destination,
-        slot_index: action.slot_index,
+        slot_index: action.slot_index ?? undefined,
       }),
     onSuccess: (resp, action) => {
       toast(resp.message);
@@ -223,7 +223,13 @@ export function Chat({ leagueId, aiEnabled, dock = false }: { leagueId: string; 
   }
 
   function decline(action: LineupAction) {
-    toast(action.replaces ? `Left ${action.replaces} in the lineup.` : `Skipped starting ${action.player_name}.`);
+    toast(
+      action.replaces
+        ? `Left ${action.replaces} in the lineup.`
+        : action.destination === "starter"
+          ? `Skipped starting ${action.player_name}.`
+          : `Kept ${action.player_name} where they are.`,
+    );
     setMessages((current) =>
       current.map((entry) =>
         entry.actions?.some((item) => sameMove(item, action))
@@ -358,7 +364,7 @@ function Avatar({ role }: { role: "user" | "assistant" }) {
 }
 
 function sameMove(item: LineupAction, action: LineupAction): boolean {
-  return item.player_id === action.player_id && item.slot_index === action.slot_index;
+  return item.player_id === action.player_id && item.slot_index === action.slot_index && item.destination === action.destination;
 }
 
 function sameClaim(item: RosterClaim, claim: RosterClaim): boolean {

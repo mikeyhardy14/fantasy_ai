@@ -1,10 +1,16 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
+LOCAL_ENVIRONMENTS = {"development", "test"}
+KNOWN_JWT_DEFAULTS = {
+    "change-me-in-production",
+    "dev-only-change-me-please-use-32-plus-chars",
+    "local-dev-jwt-secret-not-for-production",
+}
 
 
 class Settings(BaseSettings):
@@ -65,6 +71,20 @@ class Settings(BaseSettings):
     espn_schedule_ttl_hours: int = 6
 
     demo_enabled: bool = True
+
+    @model_validator(mode="after")
+    def refuse_public_jwt_secret(self) -> "Settings":
+        if self.is_local:
+            return self
+        if self.jwt_secret in KNOWN_JWT_DEFAULTS or len(self.jwt_secret) < 32:
+            raise ValueError(
+                "JWT_SECRET must be set to a random value of at least 32 characters outside development."
+            )
+        return self
+
+    @property
+    def is_local(self) -> bool:
+        return self.environment in LOCAL_ENVIRONMENTS
 
     @property
     def is_sqlite(self) -> bool:

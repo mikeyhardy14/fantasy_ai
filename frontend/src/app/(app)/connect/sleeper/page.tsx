@@ -57,7 +57,7 @@ export default function ConnectSleeperPage() {
       refetchLeagues();
       if (!imported.length) return;
       select(imported[0].id);
-      router.push(imported.length > 1 ? "/multibox" : "/dashboard");
+      router.push("/dashboard");
     },
   });
 

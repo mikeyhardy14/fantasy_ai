@@ -410,8 +410,8 @@ export interface LineupAction {
   player_name: string;
   position: string | null;
   headshot_url: string | null;
-  destination: "starter";
-  slot_index: number;
+  destination: "starter" | "bench" | "ir";
+  slot_index: number | null;
   slot: string;
   week: number;
   replaces: string | null;

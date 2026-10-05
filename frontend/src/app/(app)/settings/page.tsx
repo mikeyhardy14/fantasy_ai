@@ -121,7 +121,7 @@ export default function SettingsPage() {
                       <p className="font-medium text-slate-100">{l.name}</p>
                       <p className="text-xs text-slate-500">{PROVIDER_LABELS[l.provider] ?? l.provider} · {l.season} · {l.team_count} teams · {l.scoring_type ?? "custom"}</p>
                     </div>
-                    <Button size="sm" variant="ghost" onClick={() => { select(l.id); router.push("/dashboard"); }}>Open</Button>
+                    <Button size="sm" variant="ghost" onClick={() => { select(l.id); router.push("/league"); }}>Open</Button>
                   </li>
                 ))}
               </ul>

@@ -68,6 +68,26 @@ def lineup_action(
     )
 
 
+def move_action(week: int, row: RosterSlotOut, destination: str) -> LineupAction:
+    """A bench or IR move waiting for the manager."""
+    assert row.player is not None
+    player = row.player
+    where = "IR" if destination == "ir" else "the bench"
+    return LineupAction(
+        label=f"Move to {where}",
+        summary=f"Move {player.name} to {where}.",
+        player_id=player.id,
+        player_name=player.name,
+        position=player.position,
+        headshot_url=player.headshot_url,
+        destination="ir" if destination == "ir" else "bench",
+        slot_index=None,
+        slot="IR" if destination == "ir" else "BN",
+        week=week,
+        detail=player.position or None,
+    )
+
+
 def start_over_action(team: TeamOut, week: int, incoming: RosterSlotOut, slot_index: int) -> LineupAction | None:
     """The move that puts this player in an occupied slot. None when nobody is sitting there."""
     if incoming.player is None or slot_index < 0 or slot_index >= len(team.lineup_slots):

@@ -1,4 +1,5 @@
 import asyncio
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -19,6 +20,7 @@ from app.services.auto_reply import auto_reply_loop, ensure_auto_reply_tables
 from app.services.lineup_management import ensure_lineup_management_table
 
 log = get_logger(__name__)
+REQUEST_ID = re.compile(r"[A-Za-z0-9-]{1,64}")
 
 
 def create_app(settings: Settings | None = None, state: AppState | None = None) -> FastAPI:
@@ -53,8 +55,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
     app = FastAPI(
         title=settings.app_name,
         version="0.1.0",
-        docs_url="/api/docs",
-        openapi_url="/api/openapi.json",
+        docs_url="/api/docs" if settings.is_local else None,
+        redoc_url="/api/redoc" if settings.is_local else None,
+        openapi_url="/api/openapi.json" if settings.is_local else None,
         lifespan=lifespan,
     )
     app.add_middleware(
@@ -67,7 +70,8 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.middleware("http")
     async def request_logging(request: Request, call_next):
-        request_id = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
+        supplied = request.headers.get("x-request-id") or ""
+        request_id = supplied if REQUEST_ID.fullmatch(supplied) else uuid.uuid4().hex[:12]
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(request_id=request_id, path=request.url.path, method=request.method)
         started = time.perf_counter()

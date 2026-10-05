@@ -100,7 +100,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
             <span className="font-medium text-slate-100">2. Paste the Sleeper token</span> from the web app if you want lineup edits. It stays encrypted on the server.
           </li>
           <li>
-            <span className="font-medium text-slate-100">3. Open Multi-Box</span> to see every imported team, its host, and a link to the league.
+            <span className="font-medium text-slate-100">3. Open the dashboard</span> to see every imported team, its host, and a link to the league.
           </li>
         </ol>
       </aside>

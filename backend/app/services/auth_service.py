@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.errors import ConflictError, UnauthorizedError
-from app.core.security import create_access_token, hash_password, verify_password
+from app.core.security import burn_password_check, create_access_token, hash_password, verify_password
 from app.models import User
 from app.repositories import UserRepository
 
@@ -26,7 +26,10 @@ class AuthService:
 
     async def login(self, *, email: str, password: str) -> tuple[User, str]:
         user = await self.users.get_by_email(email)
-        if user is None or not verify_password(password, user.hashed_password):
+        if user is None:
+            burn_password_check(password)
+            raise UnauthorizedError("Incorrect email or password.")
+        if not verify_password(password, user.hashed_password):
             raise UnauthorizedError("Incorrect email or password.")
         return user, create_access_token(user.id, self.settings)
 

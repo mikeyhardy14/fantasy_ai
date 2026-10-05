@@ -377,6 +377,22 @@ async def test_lineup_tools_name_the_player_and_leave_the_write_to_the_service(c
             return _lineup_reply(roster)
 
     ctx.writes = Recorder()
+    waiting = json.loads(
+        await league_tool_registry.execute(
+            "change_lineup", {"player_name": bench["name"], "destination": "bench"}, ctx
+        )
+    )
+    assert waiting["pending_approval"] is True and ctx.writes.moves == []
+    assert ctx.pending_lineups[0].destination == "bench"
+    refused = json.loads(
+        await league_tool_registry.execute(
+            "set_lineup", {"starters": [row["name"] for row in roster["starters"]]}, ctx
+        )
+    )
+    assert "error" in refused and ctx.writes.lineups == []
+
+    ctx.pending_lineups.clear()
+    ctx.auto_approve = True
     moved = json.loads(
         await league_tool_registry.execute(
             "change_lineup", {"player_name": bench["name"], "destination": "bench"}, ctx
@@ -403,6 +419,7 @@ async def test_lineup_tools_name_the_player_and_leave_the_write_to_the_service(c
     ]
     assert ctx.writes.lineups[0].week == ctx.league.current_week
 
+    ctx.auto_approve = False
     ctx.writes.moves.clear()
     ctx.pending_lineups.clear()
     held = None
@@ -423,7 +440,7 @@ async def test_lineup_tools_name_the_player_and_leave_the_write_to_the_service(c
                     ctx,
                 )
             )
-            if attempt.get("pending_approval"):
+            if attempt.get("pending_approval") and ctx.pending_lineups[-1].replaces:
                 held, chosen, starter, slot_name = attempt, bench_row, starter_row, label
                 break
             ctx.writes.moves.clear()

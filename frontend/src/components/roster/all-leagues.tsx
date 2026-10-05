@@ -15,7 +15,7 @@ import { useState } from "react";
 
 const REFRESH_MS = 60_000;
 
-export default function MultiBoxPage() {
+export function AllLeagues() {
   const { leagues, loading, select } = useLeague();
   const teams = useQueries({
     queries: leagues.map((league) => ({
@@ -48,12 +48,12 @@ export default function MultiBoxPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Multi-Box"
+        title="Dashboard"
         description={`${leagues.length} league${leagues.length === 1 ? "" : "s"} on one screen. Click a starter to sub, or move players between the lineup, bench, and IR. Scores refresh every minute.${alertCount ? ` ${alertCount} ${alertCount === 1 ? "team needs" : "teams need"} a lineup look.` : ""}`}
       />
       <div className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
         {leagues.map((league, index) => (
-          <MultiBoxLeague
+          <LeagueCard
             key={league.id}
             league={league}
             team={teams[index]}
@@ -66,7 +66,7 @@ export default function MultiBoxPage() {
   );
 }
 
-function MultiBoxLeague({
+function LeagueCard({
   league,
   team,
   matchup,

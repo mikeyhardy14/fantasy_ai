@@ -11,7 +11,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.ai.approvals import start_over_action
+from app.ai.approvals import lineup_action, move_action, start_over_action
 from app.ai.tools.base import EmptyArgs, ToolContext, ToolRegistry
 from app.core.errors import NotFoundError
 from app.intelligence.lineup import eligible_positions_for_slot, is_eligible
@@ -620,11 +620,22 @@ def _current_week(ctx: ToolContext) -> None:
         ctx.invalidate()
 
 
+def _pending(ctx: ToolContext, proposal) -> dict[str, Any]:
+    ctx.pending_lineups.append(proposal)
+    return {
+        "pending_approval": True,
+        "verified": False,
+        "public_api_confirmed": False,
+        "summary": proposal.summary,
+        "message": "Waiting for approval. The lineup was not changed.",
+    }
+
+
 @registry.tool(
     "change_lineup",
     "Move one rostered player to a starting slot, the bench, or IR for the current week. "
-    "Bench and IR write immediately. Starting a player over someone already in that slot waits for approval "
-    "and returns pending_approval unless auto-approval is on. Call only when the user asked to change the lineup. "
+    "Every move waits for the manager and returns pending_approval unless auto-approval is on. "
+    "Call only when the user asked to change the lineup. "
     "Demo leagues are read-only. Taxi moves are not supported.",
     ChangeLineupArgs,
 )
@@ -641,17 +652,26 @@ async def change_lineup(ctx: ToolContext, args: ChangeLineupArgs) -> dict[str, A
         slot_index_value, slot_error = slot_index(tc.lineup_slots, args.slot)
         if slot_error:
             return {"error": slot_error}
-        if not ctx.auto_approve and slot_index_value is not None:
-            proposal = start_over_action(tc.team, ctx.league.current_week, row, slot_index_value)
-            if proposal is not None:
-                ctx.pending_lineups.append(proposal)
-                return {
-                    "pending_approval": True,
-                    "verified": False,
-                    "public_api_confirmed": False,
-                    "summary": proposal.summary,
-                    "message": "Waiting for approval. The lineup was not changed.",
-                }
+    if not ctx.auto_approve:
+        week = ctx.league.current_week
+        if args.destination == "starter":
+            if slot_index_value is None:
+                return {"error": "Name the starting slot for that player."}
+            slot_name = tc.lineup_slots[slot_index_value]
+            if not is_eligible(row.player, slot_name):
+                return {"error": f"{row.player.name} cannot start at {slot_name}."}
+            proposal = start_over_action(tc.team, week, row, slot_index_value) or lineup_action(
+                week,
+                row,
+                slot_index=slot_index_value,
+                slot=slot_name,
+                replaces=None,
+                replaces_points=None,
+                incoming=False,
+            )
+        else:
+            proposal = move_action(week, row, args.destination)
+        return _pending(ctx, proposal)
     body = RosterMoveRequest(
         week=ctx.league.current_week,
         player_id=row.player.id,
@@ -666,13 +686,17 @@ async def change_lineup(ctx: ToolContext, args: ChangeLineupArgs) -> dict[str, A
 @registry.tool(
     "set_lineup",
     "Replace the entire current-week starting lineup. Pass one roster player name per slot, in lineup_slots order. "
-    "Writes the Sleeper scoring lineup and confirms it. Call only when the user asked to set the lineup. "
-    "Demo leagues are read-only.",
+    "Only runs when auto-approval is on; otherwise propose each change with change_lineup. "
+    "Call only when the user asked to set the lineup. Demo leagues are read-only.",
     SetLineupArgs,
 )
 async def set_lineup(ctx: ToolContext, args: SetLineupArgs) -> dict[str, Any]:
     if ctx.writes is None:
         return _writes_missing()
+    if not ctx.auto_approve:
+        return {
+            "error": "Replacing the whole lineup needs auto-approval. Propose each change with change_lineup instead.",
+        }
     _current_week(ctx)
     tc = await ctx.team_context()
     slots = tc.lineup_slots

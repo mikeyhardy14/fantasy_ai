@@ -24,6 +24,9 @@ if (!existsSync(nextBin)) {
 
 const sqliteUrl = "sqlite+aiosqlite:///./dev.db";
 const databaseUrl = process.env.DATABASE_URL || sqliteUrl;
+if (!process.env.JWT_SECRET?.trim() && (process.env.ENVIRONMENT || "development") !== "development") {
+  fail("Set JWT_SECRET before starting outside development.");
+}
 const jwtSecret = process.env.JWT_SECRET?.trim() || "local-dev-jwt-secret-not-for-production";
 if (!process.env.DATABASE_URL) {
   console.log("No DATABASE_URL in the shell; using SQLite at backend/dev.db (Postgres is not required).");

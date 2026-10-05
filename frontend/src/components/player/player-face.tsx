@@ -1,5 +1,6 @@
 "use client";
 
+import { safeImageUrl } from "@/lib/league-location";
 import type { GameLook, Player, ScheduleGame } from "@/lib/types";
 import { cn, formatPoints } from "@/lib/utils";
 import { useState } from "react";
@@ -109,7 +110,8 @@ export function PlayerFace({
   const box =
     size === "lg" ? "h-24 w-24 text-2xl" : size === "md" ? "h-16 w-16 text-lg" : size === "xs" ? "h-7 w-7 text-[10px]" : "h-12 w-12 text-sm";
   const px = size === "lg" ? 96 : size === "md" ? 64 : size === "xs" ? 28 : 48;
-  if (!url || failed) {
+  const src = safeImageUrl(url);
+  if (!src || failed) {
     return (
       <span
         className={cn("inline-flex shrink-0 items-center justify-center rounded-lg align-middle bg-surface-overlay font-medium text-slate-400", box)}
@@ -121,7 +123,7 @@ export function PlayerFace({
   }
   return (
     <img
-      src={url}
+      src={src}
       alt=""
       width={px}
       height={px}

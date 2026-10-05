@@ -15,7 +15,7 @@ export function writeLineupAutoApprove(on: boolean): void {
 export function movesToApply(actions: LineupAction[]): LineupAction[] {
   const groups = new Map<number, LineupAction[]>();
   for (const action of actions) {
-    if (!action.replaces) continue;
+    if (!action.replaces || action.slot_index == null) continue;
     const list = groups.get(action.slot_index) ?? [];
     list.push(action);
     groups.set(action.slot_index, list);

@@ -1,3 +1,4 @@
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -7,6 +8,9 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from app.core.config import BACKEND_DIR, Settings
 from app.core.errors import UnauthorizedError
+
+JWT_ALGORITHMS = ["HS256"]
+_DUMMY_HASH = bcrypt.hashpw(b"timing-equalizer", bcrypt.gensalt()).decode("utf-8")
 
 
 def hash_password(password: str) -> str:
@@ -20,6 +24,11 @@ def verify_password(password: str, hashed: str) -> bool:
         return False
 
 
+def burn_password_check(password: str) -> None:
+    """Spend the same bcrypt time as a real check so unknown emails are not faster."""
+    verify_password(password, _DUMMY_HASH)
+
+
 def create_access_token(user_id: UUID, settings: Settings) -> str:
     now = datetime.now(UTC)
     payload = {
@@ -28,12 +37,12 @@ def create_access_token(user_id: UUID, settings: Settings) -> str:
         "exp": int((now + timedelta(minutes=settings.jwt_expire_minutes)).timestamp()),
         "type": "access",
     }
-    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    return jwt.encode(payload, settings.jwt_secret, algorithm=JWT_ALGORITHMS[0])
 
 
 def decode_access_token(token: str, settings: Settings) -> UUID:
     try:
-        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=JWT_ALGORITHMS)
     except jwt.ExpiredSignatureError as exc:
         raise UnauthorizedError("Session expired. Please sign in again.") from exc
     except jwt.PyJWTError as exc:
@@ -55,15 +64,17 @@ def resolve_credentials_key(settings: Settings) -> str | None:
     """
     if settings.credentials_key and settings.credentials_key.strip():
         return settings.credentials_key.strip()
+    if settings.environment != "development":
+        return None
     path = BACKEND_DIR / ".credentials_key"
     if path.is_file():
         stored = path.read_text(encoding="utf-8").strip()
         if stored:
             return stored
-    if settings.environment != "development":
-        return None
     key = Fernet.generate_key().decode()
     path.write_text(key + "\n", encoding="utf-8")
+    with suppress(OSError):
+        path.chmod(0o600)
     return key
 
 

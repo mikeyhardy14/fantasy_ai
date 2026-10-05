@@ -15,6 +15,7 @@ from app.ai.service import AIService
 from app.ai.tools import ToolContext, build_tool_context
 from app.core.config import Settings, get_settings
 from app.core.errors import NotFoundError, UnauthorizedError
+from app.core.rate_limit import RateLimiter
 from app.core.security import CredentialCipher, decode_access_token, resolve_credentials_key
 from app.db.session import Database
 from app.models import League, User
@@ -59,10 +60,22 @@ class AppState:
             self.props = EspnPropClient(settings.espn_schedule_cache_dir, settings.sleeper_player_cache_path)
             self.sleeper_projections = SleeperProjections(settings.espn_schedule_cache_dir, settings.sleeper_base_url)
         self.llm: LLMClient | None = build_llm(settings)
+        self.limiter = RateLimiter()
 
 
 def get_state(request: Request) -> AppState:
     return request.app.state.container
+
+
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+async def limit_auth(request: Request, state: Annotated[AppState, Depends(get_state)]) -> None:
+    state.limiter.hit(f"auth:{request.url.path}:{_client_ip(request)}", limit=20, window_seconds=60)
+
+
+AuthLimit = Depends(limit_auth)
 
 
 def get_app_settings(state: Annotated[AppState, Depends(get_state)]) -> Settings:
@@ -135,7 +148,8 @@ Providers = Annotated[ProviderRegistry, Depends(get_providers)]
 CipherDep = Annotated[CredentialCipher, Depends(get_cipher)]
 
 
-def get_ai_service(state: StateDep) -> AIService:
+def get_ai_service(state: StateDep, user: CurrentUser) -> AIService:
+    state.limiter.hit(f"ai:{user.id}", limit=30, window_seconds=60)
     return AIService(state.llm, max_tool_rounds=state.settings.ai_max_tool_rounds)
 
 

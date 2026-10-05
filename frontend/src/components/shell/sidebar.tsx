@@ -30,8 +30,8 @@ const NAV: { label: string; items: { href: string; label: string; icon: LucideIc
     label: "This week",
     items: [
       { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+      { href: "/league", label: "League View", icon: LayoutGrid },
       { href: "/team", label: "My Team", icon: UserRound },
-      { href: "/multibox", label: "Multi-Box", icon: LayoutGrid },
       { href: "/players", label: "Players", icon: List },
     ],
   },

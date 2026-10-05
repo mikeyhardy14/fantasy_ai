@@ -14,6 +14,7 @@ from app.repositories import FantasyAccountRepository, LeagueRepository
 from app.services.sync_service import SyncService
 
 log = get_logger(__name__)
+MAX_IMPORT_ALL = 25
 
 
 class IntegrationService:
@@ -109,9 +110,8 @@ class IntegrationService:
             user_id, provider, season, account_id
         )
         leagues: list[League] = []
-        for summary in summaries:
-            if summary.external_league_id in imported:
-                continue
+        pending = [s for s in summaries if s.external_league_id not in imported]
+        for summary in pending[:MAX_IMPORT_ALL]:
             leagues.append(
                 await self.import_league(user_id, provider, summary.external_league_id, account.id)
             )
