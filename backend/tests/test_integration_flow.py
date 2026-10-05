@@ -201,6 +201,41 @@ async def test_import_unknown_league(client, auth_headers, sleeper_mock):
     assert resp.status_code == 404
 
 
+async def test_import_all_leagues(client, auth_headers, sleeper_mock):
+    fx.install_extra_league(sleeper_mock)
+    await client.post("/api/integrations/sleeper/connect", json={"username": "mikefantasy"}, headers=auth_headers)
+
+    listed = await client.get("/api/integrations/sleeper/leagues", headers=auth_headers)
+    assert [lg["name"] for lg in listed.json()["leagues"]] == ["Test Dynasty League", "Test Redraft League"]
+    assert all(not lg["imported"] for lg in listed.json()["leagues"])
+
+    resp = await client.post("/api/integrations/sleeper/leagues/import-all", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    imported = resp.json()
+    assert {lg["name"] for lg in imported} == {"Test Dynasty League", "Test Redraft League"}
+    assert all(lg["sync_status"] == "success" for lg in imported)
+
+    again = await client.post("/api/integrations/sleeper/leagues/import-all", headers=auth_headers)
+    assert again.status_code == 200
+    assert again.json() == []
+
+    listed = await client.get("/api/integrations/sleeper/leagues", headers=auth_headers)
+    assert all(lg["imported"] for lg in listed.json()["leagues"])
+    owned = await client.get("/api/leagues", headers=auth_headers)
+    assert {lg["external_league_id"] for lg in owned.json()} == {fx.LEAGUE_ID, fx.LEAGUE_ID_2}
+
+
+async def test_import_all_skips_leagues_already_imported(client, auth_headers, sleeper_mock):
+    fx.install_extra_league(sleeper_mock)
+    first = await import_league(client, auth_headers)
+    resp = await client.post("/api/integrations/sleeper/leagues/import-all", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    remaining = resp.json()
+    assert len(remaining) == 1
+    assert remaining[0]["name"] == "Test Redraft League"
+    assert remaining[0]["id"] != first["id"]
+
+
 async def test_league_authorization(client, auth_headers, sleeper_mock):
     league = await import_league(client, auth_headers)
     other = await register(client, "other@example.com", "Other")

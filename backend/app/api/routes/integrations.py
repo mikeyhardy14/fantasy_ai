@@ -58,6 +58,21 @@ async def list_sleeper_leagues(
     )
 
 
+@router.post("/sleeper/leagues/import-all", response_model=list[LeagueOut])
+async def import_all_sleeper_leagues(
+    user: CurrentUser,
+    session: SessionDep,
+    providers: Providers,
+    ctx: ContextService,
+    season: int | None = Query(default=None, ge=2015, le=2100),
+    account_id: UUID | None = None,
+) -> list[LeagueOut]:
+    leagues = await IntegrationService(session, providers).import_all_leagues(
+        user.id, Provider.SLEEPER, season, account_id
+    )
+    return [await ctx.league_out(league) for league in leagues]
+
+
 @router.post("/sleeper/leagues/{external_league_id}/import", response_model=LeagueOut)
 async def import_sleeper_league(
     external_league_id: str,

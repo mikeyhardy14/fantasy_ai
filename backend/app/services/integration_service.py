@@ -97,3 +97,22 @@ class IntegrationService:
 
         await SyncService(self.session).sync_league(league, adapter)
         return league
+
+    async def import_all_leagues(
+        self,
+        user_id: UUID,
+        provider: Provider,
+        season: int | None = None,
+        account_id: UUID | None = None,
+    ) -> list[League]:
+        account, _season, summaries, imported = await self.list_provider_leagues(
+            user_id, provider, season, account_id
+        )
+        leagues: list[League] = []
+        for summary in summaries:
+            if summary.external_league_id in imported:
+                continue
+            leagues.append(
+                await self.import_league(user_id, provider, summary.external_league_id, account.id)
+            )
+        return leagues

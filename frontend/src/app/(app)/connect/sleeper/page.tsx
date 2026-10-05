@@ -50,6 +50,17 @@ export default function ConnectSleeperPage() {
     },
   });
 
+  const importAll = useMutation({
+    mutationFn: () => api.integrations.importAllSleeperLeagues(season),
+    onSuccess: (imported) => {
+      void qc.invalidateQueries({ queryKey: ["sleeper-leagues"] });
+      refetchLeagues();
+      if (!imported.length) return;
+      select(imported[0].id);
+      router.push(imported.length > 1 ? "/multibox" : "/dashboard");
+    },
+  });
+
   function onSubmit(e: FormEvent) {
     e.preventDefault();
     connect.mutate(username.trim());
@@ -57,6 +68,8 @@ export default function ConnectSleeperPage() {
 
   const thisYear = new Date().getFullYear();
   const seasons = [thisYear + 1, thisYear, thisYear - 1, thisYear - 2].filter((y) => y >= 2017);
+  const pending = leagues.data?.leagues.filter((lg) => !lg.imported) ?? [];
+  const busy = importLeague.isPending || importAll.isPending;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -82,16 +95,23 @@ export default function ConnectSleeperPage() {
 
       <Card>
         <CardHeader
-          title={<span className="flex items-center gap-2"><StepNumber n={2} done={false} /> Choose a league to import</span>}
+          title={<span className="flex items-center gap-2"><StepNumber n={2} done={!!leagues.data?.leagues.length && pending.length === 0} /> Choose leagues to import</span>}
           description={leagues.data ? `${leagues.data.leagues.length} league${leagues.data.leagues.length === 1 ? "" : "s"} for the ${leagues.data.season} season` : "Your NFL leagues will appear here"}
           action={
             sleeperAccount ? (
-              <Select value={season ?? ""} onChange={(e) => setSeason(e.target.value ? Number(e.target.value) : undefined)} aria-label="Season">
-                <option value="">Current season</option>
-                {seasons.map((y) => (
-                  <option key={y} value={y}>{y}</option>
-                ))}
-              </Select>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {pending.length > 0 ? (
+                  <Button size="sm" onClick={() => importAll.mutate()} loading={importAll.isPending} disabled={busy}>
+                    {pending.length === leagues.data?.leagues.length ? `Import all (${pending.length})` : `Import remaining (${pending.length})`}
+                  </Button>
+                ) : null}
+                <Select value={season ?? ""} onChange={(e) => setSeason(e.target.value ? Number(e.target.value) : undefined)} aria-label="Season" disabled={busy}>
+                  <option value="">Current season</option>
+                  {seasons.map((y) => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </Select>
+              </div>
             ) : null
           }
         />
@@ -107,11 +127,12 @@ export default function ConnectSleeperPage() {
           ) : (
             <ul className="divide-y divide-surface-border/60">
               {leagues.data.leagues.map((lg) => (
-                <LeagueRow key={lg.external_league_id} league={lg} importing={importLeague.isPending && importLeague.variables === lg.external_league_id} disabled={importLeague.isPending} onImport={() => importLeague.mutate(lg.external_league_id)} />
+                <LeagueRow key={lg.external_league_id} league={lg} importing={importLeague.isPending && importLeague.variables === lg.external_league_id} disabled={busy} onImport={() => importLeague.mutate(lg.external_league_id)} />
               ))}
             </ul>
           )}
           {importLeague.error ? <div className="p-4"><InlineError error={importLeague.error} /></div> : null}
+          {importAll.error ? <div className="p-4"><InlineError error={importAll.error} /></div> : null}
         </CardBody>
       </Card>
     </div>

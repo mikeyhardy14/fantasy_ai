@@ -69,4 +69,13 @@ describe("api client", () => {
     expect(fetchMock.mock.calls[0][0]).toContain("/api/leagues/L1/matchup?week=2");
     expect(fetchMock.mock.calls[1][0]).toContain("/api/leagues/L1/matchups?week=3");
   });
+
+  it("posts import-all with an optional season", async () => {
+    const fetchMock = mockFetch(200, []);
+    await api.integrations.importAllSleeperLeagues();
+    await api.integrations.importAllSleeperLeagues(2026);
+    expect(fetchMock.mock.calls[0][0]).toMatch(/\/api\/integrations\/sleeper\/leagues\/import-all$/);
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: "POST" });
+    expect(fetchMock.mock.calls[1][0]).toContain("/api/integrations/sleeper/leagues/import-all?season=2026");
+  });
 });

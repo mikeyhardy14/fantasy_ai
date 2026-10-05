@@ -5,6 +5,7 @@ from httpx import Response
 USER_ID = "111111111111111111"
 OPP_USER_ID = "222222222222222222"
 LEAGUE_ID = "999999999999999999"
+LEAGUE_ID_2 = "888888888888888888"
 
 STATE = {"season": "2026", "week": 4, "display_week": 4, "season_type": "regular", "league_season": "2026"}
 
@@ -35,7 +36,32 @@ LEAGUE = {
     "roster_positions": ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DEF", "BN", "BN", "IR"],
 }
 
+LEAGUE_2 = {**LEAGUE, "league_id": LEAGUE_ID_2, "name": "Test Redraft League"}
+
 LEAGUES = [LEAGUE]
+
+
+def install_extra_league(router, league: dict | None = None) -> dict:
+    """Add another NFL league to the mock so import-all can pull more than one."""
+    extra = league or LEAGUE_2
+    lid = extra["league_id"]
+    router.get(f"/user/{USER_ID}/leagues/nfl/2026").mock(return_value=Response(200, json=[LEAGUE, extra]))
+    router.get(f"/league/{lid}").mock(return_value=Response(200, json=extra))
+    router.get(f"/league/{lid}/rosters").mock(return_value=Response(200, json=ROSTERS))
+    router.get(f"/league/{lid}/users").mock(return_value=Response(200, json=USERS))
+    for week in range(1, 19):
+        if week == 4:
+            payload = MATCHUPS_W4
+        elif week == 3:
+            payload = MATCHUPS_W3
+        else:
+            payload = []
+        router.get(f"/league/{lid}/matchups/{week}").mock(return_value=Response(200, json=payload))
+    router.get(f"/league/{lid}/transactions/4").mock(return_value=Response(200, json=[]))
+    router.get(f"/league/{lid}/transactions/3").mock(return_value=Response(200, json=TRANSACTIONS_W3))
+    router.get(f"/league/{lid}/transactions/2").mock(return_value=Response(200, json=[]))
+    router.get(f"/league/{lid}/transactions/1").mock(return_value=Response(200, json=[]))
+    return extra
 
 USERS = [
     {"user_id": USER_ID, "display_name": "MikeFantasy", "avatar": None, "metadata": {"team_name": "Mike's Marauders"}},

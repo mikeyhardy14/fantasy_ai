@@ -132,6 +132,8 @@ export const api = {
     sleeperLeagues: (season?: number) => request<ProviderLeaguesResponse>(`/api/integrations/sleeper/leagues${qs({ season })}`),
     importSleeperLeague: (externalLeagueId: string) =>
       request<League>(`/api/integrations/sleeper/leagues/${encodeURIComponent(externalLeagueId)}/import`, { method: "POST" }),
+    importAllSleeperLeagues: (season?: number) =>
+      request<League[]>(`/api/integrations/sleeper/leagues/import-all${qs({ season })}`, { method: "POST" }),
     saveSleeperToken: (token: string, accountId?: string) =>
       request<FantasyAccount>(`/api/integrations/sleeper/token${qs({ account_id: accountId })}`, {
         method: "PUT",
