@@ -15,7 +15,8 @@ export function lineupHasPlayed(starters: RosterSlot[]): boolean {
 }
 
 export function slateOver(nfl: NflGame[] | undefined): boolean {
-  return Boolean(nfl?.length) && nfl.every((game) => game.state === "post");
+  if (!nfl || nfl.length === 0) return false;
+  return nfl.every((game) => game.state === "post");
 }
 
 export function fantasyLabel(status: string, starters: RosterSlot[], nfl?: NflGame[]): string {

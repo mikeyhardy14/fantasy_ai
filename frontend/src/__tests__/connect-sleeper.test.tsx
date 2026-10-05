@@ -98,7 +98,7 @@ describe("Connect Sleeper import all", () => {
   });
 
   it("imports every pending league and opens Multi-Box", async () => {
-    const fetchMock = vi.fn(async (url: string) => {
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
       const path = String(url);
       if (path.endsWith("/api/integrations/accounts")) return json([account]);
       if (path.includes("/leagues/import-all")) {
