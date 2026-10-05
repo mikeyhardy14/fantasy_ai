@@ -6,7 +6,7 @@ export function boardWeek(
   now: Date = new Date(),
 ): number {
   const week = Math.min(18, Math.max(1, providerWeek));
-  const slateFinal = Boolean(nfl?.length) && nfl.every((game) => game.state === "post");
+  const slateFinal = nfl != null && nfl.length > 0 && nfl.every((game) => game.state === "post");
   if (!slateFinal || week >= 18) return week;
   const day = new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "America/New_York" }).format(now);
   if (day === "Sun" || day === "Mon") return week;
