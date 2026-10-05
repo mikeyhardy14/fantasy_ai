@@ -138,9 +138,9 @@ class SleeperWriteService:
     async def set_lineup(self, league: League, body: LineupUpdateRequest) -> LineupUpdateResponse:
         if league.provider != Provider.SLEEPER:
             raise ValidationFailed("Lineup edits are only available for Sleeper leagues.")
-        if body.week != league.current_week:
+        if body.week not in {league.current_week, min(18, league.current_week + 1)}:
             raise ValidationFailed(
-                f"Only week {league.current_week} can be edited. Sleeper scores the lineup stored on this week's matchup."
+                f"Only week {league.current_week} or the next week can be edited."
             )
         team = await self.context.user_team(league)
         if team is None:
@@ -239,9 +239,9 @@ class SleeperWriteService:
         """
         if league.provider != Provider.SLEEPER:
             raise ValidationFailed("Lineup edits are only available for Sleeper leagues.")
-        if body.week != league.current_week:
+        if body.week not in {league.current_week, min(18, league.current_week + 1)}:
             raise ValidationFailed(
-                f"Only week {league.current_week} can be edited. Sleeper scores the lineup stored on this week's matchup."
+                f"Only week {league.current_week} or the next week can be edited."
             )
         team = await self.context.user_team(league)
         if team is None:

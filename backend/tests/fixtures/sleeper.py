@@ -71,8 +71,22 @@ MATCHUPS_W4 = [
     {"matchup_id": 1, "roster_id": 2, "points": 0.0, "players_points": {}, "starters": ROSTERS[1]["starters"]},
 ]
 MATCHUPS_W3 = [
-    {"matchup_id": 1, "roster_id": 1, "points": 120.5, "players_points": {"1001": 22.1, "2001": 18.4}},
-    {"matchup_id": 1, "roster_id": 2, "points": 99.2, "players_points": {"1002": 15.0}},
+    {
+        "matchup_id": 1,
+        "roster_id": 1,
+        "points": 120.5,
+        "players_points": {"1001": 22.1, "2001": 18.4, "2003": 12.0},
+        "starters": ["1001", "2001", "2002", "3001", "3002", "4001", "2003", "5001", "KC"],
+        "players": ROSTERS[0]["players"],
+    },
+    {
+        "matchup_id": 1,
+        "roster_id": 2,
+        "points": 99.2,
+        "players_points": {"1002": 15.0},
+        "starters": ROSTERS[1]["starters"],
+        "players": ROSTERS[1]["players"],
+    },
 ]
 
 TRANSACTIONS_W3 = [
@@ -154,10 +168,14 @@ def install(router):
     router.get(f"/league/{LEAGUE_ID}").mock(return_value=Response(200, json=LEAGUE))
     router.get(f"/league/{LEAGUE_ID}/rosters").mock(return_value=Response(200, json=ROSTERS))
     router.get(f"/league/{LEAGUE_ID}/users").mock(return_value=Response(200, json=USERS))
-    router.get(f"/league/{LEAGUE_ID}/matchups/4").mock(return_value=Response(200, json=MATCHUPS_W4))
-    router.get(f"/league/{LEAGUE_ID}/matchups/3").mock(return_value=Response(200, json=MATCHUPS_W3))
-    router.get(f"/league/{LEAGUE_ID}/matchups/2").mock(return_value=Response(200, json=[]))
-    router.get(f"/league/{LEAGUE_ID}/matchups/1").mock(return_value=Response(200, json=[]))
+    for week in range(1, 19):
+        if week == 4:
+            payload = MATCHUPS_W4
+        elif week == 3:
+            payload = MATCHUPS_W3
+        else:
+            payload = []
+        router.get(f"/league/{LEAGUE_ID}/matchups/{week}").mock(return_value=Response(200, json=payload))
     router.get(f"/league/{LEAGUE_ID}/transactions/4").mock(return_value=Response(200, json=[]))
     router.get(f"/league/{LEAGUE_ID}/transactions/3").mock(return_value=Response(200, json=TRANSACTIONS_W3))
     router.get(f"/league/{LEAGUE_ID}/transactions/2").mock(return_value=Response(200, json=[]))

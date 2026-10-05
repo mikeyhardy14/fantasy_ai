@@ -40,7 +40,9 @@ class SyncService:
         league.sync_error = None
         await self.session.commit()
         try:
-            snapshot = await provider.fetch_league_snapshot(league.external_league_id)
+            snapshot = await provider.fetch_league_snapshot(
+                league.external_league_id, weeks_back=17, weeks_forward=17
+            )
             await self.apply_snapshot(league, snapshot)
             league.sync_status = SyncStatus.SUCCESS
             league.sync_error = None
@@ -94,6 +96,7 @@ class SyncService:
             referenced.update(e.external_player_id for e in roster.entries)
         for m in snapshot.matchups:
             referenced.update(m.player_points.keys())
+            referenced.update(e.external_player_id for e in m.roster_entries)
         for t in snapshot.transactions:
             referenced.update(a["external_player_id"] for a in t.adds)
             referenced.update(d["external_player_id"] for d in t.drops)
@@ -120,6 +123,20 @@ class SyncService:
                     continue
                 entries.append((player.id, e.roster_slot, e.is_starter, e.slot_index))
             await self.rosters.replace_for_team(team.id, week, entries)
+
+        for m in snapshot.matchups:
+            if m.week == league.current_week or not m.roster_entries:
+                continue
+            team = teams_by_ext.get(m.external_team_id)
+            if team is None:
+                continue
+            entries = []
+            for e in m.roster_entries:
+                player = players_by_ext.get(e.external_player_id)
+                if player is None:
+                    continue
+                entries.append((player.id, e.roster_slot, e.is_starter, e.slot_index))
+            await self.rosters.replace_for_team(team.id, m.week, entries)
 
         # -- matchups -----------------------------------------------------------
         by_week_matchup: dict[tuple[int, str | None], list] = defaultdict(list)

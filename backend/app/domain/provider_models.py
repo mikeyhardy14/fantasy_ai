@@ -92,6 +92,7 @@ class MatchupData(BaseModel):
     points: float = 0.0
     projected_points: float | None = None
     player_points: dict[str, float] = Field(default_factory=dict)  # external_player_id -> pts
+    roster_entries: list[RosterSlotEntry] = Field(default_factory=list)
 
 
 class TransactionData(BaseModel):

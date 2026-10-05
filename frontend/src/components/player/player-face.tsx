@@ -108,6 +108,7 @@ export function PlayerFace({
   const initial = name.replace(/[^A-Za-z]/g, "").slice(0, 1).toUpperCase() || "?";
   const box =
     size === "lg" ? "h-24 w-24 text-2xl" : size === "md" ? "h-16 w-16 text-lg" : size === "xs" ? "h-7 w-7 text-[10px]" : "h-12 w-12 text-sm";
+  const px = size === "lg" ? 96 : size === "md" ? 64 : size === "xs" ? 28 : 48;
   if (!url || failed) {
     return (
       <span
@@ -122,6 +123,10 @@ export function PlayerFace({
     <img
       src={url}
       alt=""
+      width={px}
+      height={px}
+      loading={size === "lg" ? "eager" : "lazy"}
+      decoding="async"
       className={cn("inline-block shrink-0 rounded-lg align-middle bg-surface-overlay object-cover", box)}
       onError={() => setFailed(true)}
     />

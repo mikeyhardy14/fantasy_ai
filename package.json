@@ -1,0 +1,10 @@
+{
+  "name": "fantasy-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OMAHA — API and app",
+  "workspaces": ["frontend"],
+  "scripts": {
+    "start": "node scripts/start.mjs"
+  }
+}

@@ -97,7 +97,10 @@ async def test_import_league_and_dashboard(client, auth_headers, sleeper_mock, s
     m = resp.json()
     assert m["week"] == 4 and m["opponent"]["team"]["name"] == "Rival" and m["status"] == "upcoming"
     resp = await client.get(f"/api/leagues/{league_id}/matchup?week=3", headers=auth_headers)
-    assert resp.json()["user"]["points"] == 120.5 and resp.json()["status"] == "final"
+    past = resp.json()
+    assert past["user"]["points"] == 120.5 and past["status"] == "final"
+    flex = next(slot for slot in past["user"]["starters"] if slot["slot"] == "FLEX")
+    assert flex["player"]["name"] == "Flash Backup"
 
     # League detail with settings
     resp = await client.get(f"/api/leagues/{league_id}", headers=auth_headers)
@@ -164,7 +167,7 @@ async def test_sync_is_idempotent(client, auth_headers, sleeper_mock, session):
         return out
 
     first = await counts()
-    assert first["RosterEntry"] == 12 + 8
+    assert first["RosterEntry"] == (12 + 8) * 2  # current week plus week 3 matchup lineups
     assert first["Matchup"] == 4  # week 3 + week 4, two teams each
     assert first["Transaction"] == 1
 
@@ -212,6 +215,52 @@ async def test_league_authorization(client, auth_headers, sleeper_mock):
     assert resp.json() == []
     resp = await client.get(f"/api/leagues/{uuid4()}/team", headers=auth_headers)
     assert resp.status_code == 404
+
+
+async def test_matchup_nfl_games_follow_the_requested_week(client, auth_headers, sleeper_mock, state):
+    from app.nfl_data.espn import GameSummary
+
+    class WeekSlate:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        async def live_summaries(self, season, week):
+            done = week < 4
+            return [
+                GameSummary(
+                    away="BUF" if week == 3 else "SF",
+                    home="KC",
+                    away_score=14 if done else None,
+                    home_score=21 if done else None,
+                    state="post" if done else "pre",
+                    detail="Final" if done else "Sun 1:00 PM",
+                    summary=None,
+                    broadcast="CBS",
+                )
+            ]
+
+    state.nfl_data = WeekSlate(state.nfl_data)
+    league = await import_league(client, auth_headers)
+    league_id = league["id"]
+
+    past = (await client.get(f"/api/leagues/{league_id}/matchup?week=3", headers=auth_headers)).json()
+    assert past["games"][0]["away"] == "BUF"
+    assert past["games"][0]["state"] == "post"
+    flex = next(slot for slot in past["user"]["starters"] if slot["slot"] == "FLEX")
+    assert flex["player"]["name"] == "Flash Backup"
+
+    current = (await client.get(f"/api/leagues/{league_id}/matchup?week=4", headers=auth_headers)).json()
+    assert current["games"][0]["away"] == "SF"
+    assert current["games"][0]["state"] == "pre"
+    flex = next(slot for slot in current["user"]["starters"] if slot["slot"] == "FLEX")
+    assert flex["player"]["name"] == "Deep Threat"
+
+    future = (await client.get(f"/api/leagues/{league_id}/matchup?week=5", headers=auth_headers)).json()
+    assert future["games"][0]["away"] == "SF"
+    assert future["is_bye"] is True
 
 
 @pytest.mark.parametrize("provider", ["yahoo", "espn", "nfl"])

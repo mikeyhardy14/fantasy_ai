@@ -181,7 +181,8 @@ def map_roster(raw: dict[str, Any], roster_positions: list[str]) -> RosterData:
     return RosterData(external_team_id=str(raw["roster_id"]), entries=entries)
 
 
-def map_matchup(raw: dict[str, Any], week: int) -> MatchupData:
+def map_matchup(raw: dict[str, Any], week: int, roster_positions: list[str] | None = None) -> MatchupData:
+    entries = map_roster(raw, roster_positions).entries if roster_positions and raw.get("roster_id") is not None else []
     return MatchupData(
         external_matchup_id=str(raw["matchup_id"]) if raw.get("matchup_id") is not None else None,
         week=week,
@@ -189,6 +190,7 @@ def map_matchup(raw: dict[str, Any], week: int) -> MatchupData:
         points=float(raw.get("points") or 0.0),
         projected_points=None,  # not provided by the public Sleeper API
         player_points={str(k): float(v) for k, v in (raw.get("players_points") or {}).items()},
+        roster_entries=entries,
     )
 
 

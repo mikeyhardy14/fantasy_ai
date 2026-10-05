@@ -61,4 +61,12 @@ describe("api client", () => {
     await api.leagues.players("L1", { position: "RB", search: undefined, available: true, limit: 10 });
     expect(fetchMock.mock.calls[0][0]).toBe(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/leagues/L1/players?position=RB&available=true&limit=10`);
   });
+
+  it("passes the selected week on matchup requests", async () => {
+    const fetchMock = mockFetch(200, null);
+    await api.leagues.matchup("L1", 2);
+    await api.leagues.matchups("L1", 3);
+    expect(fetchMock.mock.calls[0][0]).toContain("/api/leagues/L1/matchup?week=2");
+    expect(fetchMock.mock.calls[1][0]).toContain("/api/leagues/L1/matchups?week=3");
+  });
 });

@@ -6,15 +6,18 @@ import { Providers } from "./providers";
 
 const plex = IBM_Plex_Sans({
   subsets: ["latin"],
-  weight: ["400", "500", "600"],
+  weight: ["400", "500"],
+  display: "swap",
   variable: "--font-plex",
 });
 
 const newsreader = Newsreader({
   subsets: ["latin"],
   style: ["normal", "italic"],
-  weight: ["400", "500", "600"],
+  weight: ["500"],
+  display: "optional",
   variable: "--font-newsreader",
+  preload: false,
 });
 
 export const metadata: Metadata = {

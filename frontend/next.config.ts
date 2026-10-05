@@ -10,7 +10,10 @@ const nextConfig: NextConfig = {
     ];
   },
   images: {
-    remotePatterns: [{ protocol: "https", hostname: "sleepercdn.com" }],
+    remotePatterns: [
+      { protocol: "https", hostname: "sleepercdn.com" },
+      { protocol: "https", hostname: "a.espncdn.com" },
+    ],
   },
 };
 

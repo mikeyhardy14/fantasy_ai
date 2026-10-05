@@ -68,23 +68,27 @@ class FantasyProvider(ABC):
         ...
 
     async def fetch_league_snapshot(
-        self, league_id: str, *, weeks_back: int = 3
+        self, league_id: str, *, weeks_back: int = 3, weeks_forward: int = 1
     ) -> ImportedLeagueSnapshot:
         """Default implementation composed from the primitives above.
 
-        Providers may override for efficiency. Matchups and transactions are
-        fetched for the current week and a few prior weeks.
+        Providers may override for efficiency. A full import can ask for the
+        whole regular season; live refresh stays on nearby weeks. Transactions
+        cover the current week and a few prior weeks.
         """
         league = await self.get_league(league_id)
         teams = await self.get_teams(league_id)
         rosters = await self.get_rosters(league_id)
         players = await self.get_players()
 
-        weeks = [w for w in range(league.current_week - weeks_back, league.current_week + 1) if w >= 1]
+        start = max(1, league.current_week - weeks_back)
+        end = min(18, league.current_week + weeks_forward)
+        tx_weeks = [w for w in range(league.current_week - weeks_back, league.current_week + 1) if w >= 1]
         matchups: list[MatchupData] = []
         transactions: list[TransactionData] = []
-        for week in weeks:
+        for week in range(start, end + 1):
             matchups.extend(await self.get_matchups(league_id, week))
+        for week in tx_weeks:
             if self.capabilities.supports_transactions:
                 transactions.extend(await self.get_transactions(league_id, week))
 

@@ -1,4 +1,5 @@
 import { HotList, playersInNflGame } from "@/components/matchup/hot-list";
+import { ScoreBox, ScoreBoxSide, ScoreMark } from "@/components/matchup/score-box";
 import { Pop } from "@/components/ui/pop";
 import type { NflGame, RosterSlot } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -10,7 +11,7 @@ const ESPN_TEAM: Record<string, string> = { WAS: "wsh", WSH: "wsh", JAC: "jax" }
 
 export function teamLogoUrl(abbr: string): string {
   const code = ESPN_TEAM[abbr.toUpperCase()] ?? abbr.toLowerCase();
-  return `https://a.espncdn.com/i/teamlogos/nfl/500/${code}.png`;
+  return `https://a.espncdn.com/combiner/i?img=/i/teamlogos/nfl/500/${code}.png&w=48&h=48`;
 }
 
 const NETWORK_MARKS: Record<string, { src: string; label: string }> = {
@@ -82,6 +83,23 @@ export function gameLine(game: NflGame): string {
   return `${game.away} ${game.away_score}, ${game.home} ${game.home_score}`;
 }
 
+function postedScore(value: number | null, state: string | null): string {
+  if (state === "pre" || value == null) return "—";
+  return String(value);
+}
+
+function leading(game: NflGame, side: "away" | "home"): boolean {
+  if (game.state === "pre" || game.away_score == null || game.home_score == null) return false;
+  if (game.away_score === game.home_score) return false;
+  return side === "away" ? game.away_score > game.home_score : game.home_score > game.away_score;
+}
+
+function nflStatus(game: NflGame): string {
+  if (game.state === "in") return "Live";
+  if (game.state === "post") return "Final";
+  return "Upcoming";
+}
+
 export function NflSlate({
   games,
   compact = false,
@@ -95,43 +113,39 @@ export function NflSlate({
   if (!games.length) return <p className="px-3 py-4 text-xs text-slate-500">No NFL games this week.</p>;
   return (
     <>
-      <ul className="divide-y divide-surface-border/60">
-        {games.map((game) => {
+      <ul className={cn("grid gap-1.5 p-2", compact ? "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" : "sm:grid-cols-2 xl:grid-cols-3")}>
+        {games.map((game, index) => {
           const live = game.state === "in";
           return (
             <li key={`${game.away}-${game.home}`}>
-              <button
-                type="button"
+              <ScoreBox
                 data-testid="nfl-game"
                 data-live={live ? "true" : "false"}
-                className={cn(
-                  "w-full text-left",
-                  compact ? "px-3 py-2" : "px-5 py-3",
-                  live && "border-l-2 border-l-red-400 bg-red-500/10",
-                )}
+                live={live}
+                compact={compact}
+                status={nflStatus(game)}
+                clock={game.detail}
+                footer={
+                  <>
+                    <StreamLine game={game} />
+                    {compact ? null : game.summary ? <p className="text-sm text-slate-200">{game.summary}</p> : null}
+                  </>
+                }
                 onClick={() => setOpen(game)}
               >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <TeamMark team={game.away} ball={live && game.possession === game.away} />
-                    <span className={cn("text-sm font-medium tabular-nums", live ? "text-slate-100" : "text-slate-300")}>
-                      {gameLine(game)}
-                    </span>
-                    <TeamMark team={game.home} ball={live && game.possession === game.home} />
-                  </div>
-                  <p className={cn("shrink-0 text-[11px]", live ? "font-semibold uppercase tracking-wide text-red-300" : "text-slate-500")}>
-                    {live ? "Live" : game.detail ?? "—"}
-                  </p>
-                </div>
-                <StreamLine game={game} className="mt-1" />
-                {compact ? null : (
-                  <>
-                    {live && game.possession ? <p className="mt-1 text-[11px] font-medium text-emerald-200">Ball: {game.possession}</p> : null}
-                    {live && game.detail ? <p className="mt-1 text-[11px] text-slate-500">{game.detail}</p> : null}
-                    {game.summary ? <p className="mt-1 text-sm text-slate-200">{game.summary}</p> : null}
-                  </>
-                )}
-              </button>
+                <ScoreBoxSide
+                  mark={<TeamMark abbr={game.away} ring={live && game.possession === game.away} priority={index < 2} />}
+                  name={game.away}
+                  score={postedScore(game.away_score, game.state)}
+                  ahead={leading(game, "away")}
+                />
+                <ScoreBoxSide
+                  mark={<TeamMark abbr={game.home} ring={live && game.possession === game.home} priority={index < 2} />}
+                  name={game.home}
+                  score={postedScore(game.home_score, game.state)}
+                  ahead={leading(game, "home")}
+                />
+              </ScoreBox>
             </li>
           );
         })}
@@ -139,17 +153,24 @@ export function NflSlate({
       {open ? (
         <Pop title={gameLine(open)} onClose={() => setOpen(null)}>
           <div className="space-y-2 border-b border-white/10 px-4 py-3 text-sm" data-testid="nfl-game-detail">
-            <div className="flex items-center gap-3">
-              <TeamMark team={open.away} size="md" ball={open.state === "in" && open.possession === open.away} />
-              <p className="font-serif text-2xl tabular-nums text-slate-100">{gameLine(open)}</p>
-              <TeamMark team={open.home} size="md" ball={open.state === "in" && open.possession === open.home} />
-            </div>
+            <span className="sr-only">{gameLine(open)}</span>
+            <ScoreBoxSide
+              mark={<TeamMark abbr={open.away} size="md" ring={open.state === "in" && open.possession === open.away} />}
+              name={open.away}
+              score={postedScore(open.away_score, open.state)}
+              ahead={leading(open, "away")}
+            />
+            <ScoreBoxSide
+              mark={<TeamMark abbr={open.home} size="md" ring={open.state === "in" && open.possession === open.home} />}
+              name={open.home}
+              score={postedScore(open.home_score, open.state)}
+              ahead={leading(open, "home")}
+            />
             <p className="text-xs text-slate-400">
-              {open.state === "in" ? "Live" : open.state === "post" ? "Final" : "Upcoming"}
+              {nflStatus(open)}
               {open.detail ? ` · ${open.detail}` : ""}
             </p>
             <StreamLine game={open} />
-            {open.possession ? <p className="text-xs font-medium text-emerald-200">Ball: {open.possession}</p> : null}
             {open.summary ? <p className="pt-1 text-sm text-slate-200">{open.summary}</p> : null}
           </div>
           <p className="px-4 pt-3 text-[11px] font-medium uppercase tracking-wide text-slate-500">In this league</p>
@@ -160,20 +181,8 @@ export function NflSlate({
   );
 }
 
-function TeamMark({ team, size = "sm", ball }: { team: string; size?: "sm" | "md"; ball?: boolean }) {
-  const [failed, setFailed] = useState(false);
-  const box = size === "md" ? "h-8 w-8" : "h-6 w-6";
-  return (
-    <span className={cn("relative inline-flex shrink-0", ball && "rounded-full ring-2 ring-emerald-300")}>
-      {failed ? (
-        <span className={cn("inline-flex items-center justify-center rounded-full bg-surface-overlay text-[9px] font-semibold text-slate-300", box)}>
-          {team}
-        </span>
-      ) : (
-        <img src={teamLogoUrl(team)} alt={`${team} logo`} className={cn("rounded-full bg-white object-contain", box)} onError={() => setFailed(true)} />
-      )}
-    </span>
-  );
+function TeamMark({ abbr, ring, size, priority }: { abbr: string; ring?: boolean; size?: "sm" | "md"; priority?: boolean }) {
+  return <ScoreMark src={teamLogoUrl(abbr)} label={abbr} alt={`${abbr} logo`} ring={ring} size={size} priority={priority} />;
 }
 
 function StreamLine({ game, className }: { game: NflGame; className?: string }) {
@@ -197,5 +206,5 @@ function NetworkMark({ name }: { name: string }) {
       </span>
     );
   }
-  return <img src={mark.src} alt={`${mark.label} logo`} className="h-4 w-auto max-w-[2.75rem] shrink-0 object-contain" onError={() => setFailed(true)} />;
+  return <img src={mark.src} alt={`${mark.label} logo`} width={44} height={16} loading="lazy" decoding="async" className="h-4 w-auto max-w-[2.75rem] shrink-0 object-contain" onError={() => setFailed(true)} />;
 }

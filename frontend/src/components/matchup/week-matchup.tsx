@@ -115,7 +115,7 @@ export function WeekMatchup({
         </>
       )}
 
-      {showSlate ? (slate.data ? <MatchupSlate games={slate.data} week={week} /> : slate.isLoading ? <SkeletonRows rows={4} /> : null) : null}
+      {showSlate ? (slate.data ? <MatchupSlate games={slate.data} week={week} nfl={matchup.data?.games} /> : slate.isLoading ? <SkeletonRows rows={4} /> : null) : null}
 
       {showNfl && matchup.data?.games ? (
         <Card>

@@ -33,6 +33,7 @@ from app.nfl_data.sleeper_stats import (
 )
 from app.nfl_data.usage import UsageTable, build_usage
 from app.nfl_data.vegas import explain_projection, normalize_position
+from app.nfl_data.week import board_week
 from app.nfl_data.vegas_ff import project_player, scoring_from_league, sims_for, start_sit
 from app.repositories import (
     MatchupRepository,
@@ -104,13 +105,23 @@ def _known(players: dict[UUID, Player], raw: object) -> Player | None:
         return None
 
 
-def _matchup_status(week: int, current_week: int, points: float, opponent_points: float | None) -> str:
+def _nfl_slate_final(nfl: list | None) -> bool:
+    return bool(nfl) and all(getattr(game, "state", None) == "post" for game in nfl)
+
+
+def _matchup_status(
+    week: int,
+    current_week: int,
+    points: float,
+    opponent_points: float | None,
+    nfl: list | None = None,
+) -> str:
     if opponent_points is None:
         return "bye"
+    if week < current_week or _nfl_slate_final(nfl):
+        return "final"
     if points == 0 and opponent_points == 0:
         return "upcoming"
-    if week < current_week:
-        return "final"
     return "in_progress"
 
 
@@ -141,6 +152,10 @@ class LeagueContextService:
         owner = league.fantasy_account.external_user_id
         return await self.teams.get_by_owner(league.id, owner)
 
+    async def _viewing_week(self, league: League) -> int:
+        games, _blob = await self._current_board(league, league.current_week)
+        return board_week(league.current_week, slate_final=_nfl_slate_final(games))
+
     async def league_out(self, league: League) -> LeagueOut:
         team = await self.user_team(league)
         return LeagueOut(
@@ -150,7 +165,7 @@ class LeagueContextService:
             name=league.name,
             season=league.season,
             team_count=league.team_count,
-            current_week=league.current_week,
+            current_week=await self._viewing_week(league),
             status=league.status,
             avatar=league.avatar,
             scoring_type=league.league_settings.get("scoring_type"),
@@ -619,8 +634,6 @@ class LeagueContextService:
     # ---- teams ----------------------------------------------------------------
 
     async def _current_board(self, league: League, week: int) -> tuple[list[NflGameOut], dict]:
-        if week != league.current_week:
-            return [], {}
         cache: dict = getattr(self, "_board_cache", None)
         if cache is None:
             cache = {}
@@ -729,9 +742,9 @@ class LeagueContextService:
         )
 
     async def team_out(self, league: League, team: FantasyTeam, week: int | None = None) -> TeamOut:
-        week = week or league.current_week
+        week = week or await self._viewing_week(league)
         entries = await self.rosters.list_for_team(team.id, week)
-        if not entries and week != league.current_week:
+        if not entries and week > league.current_week:
             entries = await self.rosters.list_for_team(team.id, league.current_week)
         matchup = await self.matchups.get_for_team(league.id, week, team.id)
         points = matchup.player_points if matchup else {}
@@ -780,10 +793,24 @@ class LeagueContextService:
     # ---- matchup ---------------------------------------------------------------
 
     async def matchup_out(self, league: League, team: FantasyTeam, week: int | None = None) -> MatchupOut | None:
-        week = week or league.current_week
+        week = week or await self._viewing_week(league)
+        games, _blob = await self._current_board(league, week)
         m = await self.matchups.get_for_team(league.id, week, team.id)
         if m is None:
-            return None
+            user_side = await self.team_out(league, team, week)
+            return MatchupOut(
+                week=week,
+                is_bye=True,
+                user=MatchupSideOut(
+                    team=user_side.team,
+                    points=0.0,
+                    projected_points=user_side.projected_points,
+                    starters=user_side.starters,
+                ),
+                opponent=None,
+                status="bye",
+                games=games,
+            )
         user_side = await self.team_out(league, team, week)
         user = MatchupSideOut(
             team=user_side.team, points=m.points, projected_points=user_side.projected_points, starters=user_side.starters
@@ -805,16 +832,19 @@ class LeagueContextService:
             is_bye=opponent is None,
             user=user,
             opponent=opponent,
-            status=_matchup_status(week, league.current_week, m.points, opponent.points if opponent else None),
+            status=_matchup_status(
+                week, league.current_week, m.points, opponent.points if opponent else None, games
+            ),
             calls=_slot_calls(user, opponent),
-            games=await self._nfl_games(league.season, week),
+            games=games,
         )
         await self.attach_live_stat_lines(league, view)
         return view
 
     async def week_matchups(self, league: League, week: int | None = None) -> list[LeagueMatchupOut]:
         """Every game this week. The user's matchup is first."""
-        week = week or league.current_week
+        week = week or await self._viewing_week(league)
+        nfl, _blob = await self._current_board(league, week)
         rows = await self.matchups.list_for_week(league.id, week)
         user = await self.user_team(league)
         user_id = user.id if user else None
@@ -855,7 +885,11 @@ class LeagueContextService:
                     is_bye=opponent_side is None,
                     involves_user=user_id is not None and user_id in {primary.team_id, other.team_id if other else None},
                     status=_matchup_status(
-                        week, league.current_week, team_side.points, opponent_side.points if opponent_side else None
+                        week,
+                        league.current_week,
+                        team_side.points,
+                        opponent_side.points if opponent_side else None,
+                        nfl,
                     ),
                     team=team_side,
                     opponent=opponent_side,
@@ -917,6 +951,7 @@ class LeagueContextService:
             league.current_week,
             view.user.points,
             view.opponent.points if view.opponent else None,
+            view.games,
         )
 
     async def apply_live_week_points(self, league: League, games: list[LeagueMatchupOut], raw_sides: list[dict]) -> None:
@@ -931,6 +966,7 @@ class LeagueContextService:
                 if away:
                     sides[away.external_team_id] = game.opponent
         week = games[0].week if games else league.current_week
+        nfl, _blob = await self._current_board(league, week)
         await self._paint_live_points(league, week, sides, raw_sides)
         for game in games:
             game.status = _matchup_status(
@@ -938,6 +974,7 @@ class LeagueContextService:
                 league.current_week,
                 game.team.points,
                 game.opponent.points if game.opponent else None,
+                nfl,
             )
 
     async def _paint_live_points(
@@ -990,7 +1027,7 @@ class LeagueContextService:
 
     async def league_rosters(self, league: League, week: int | None = None) -> list[TeamOut]:
         """Every roster in the league, in standings order."""
-        week = week or league.current_week
+        week = week or await self._viewing_week(league)
         teams = self._standings_order(await self.teams.list_for_league(league.id))
         return [await self.team_out(league, team, week) for team in teams]
 
@@ -1051,7 +1088,7 @@ class LeagueContextService:
         )
 
     async def build_context(self, league: League, week: int | None = None) -> TeamContext:
-        week = week or league.current_week
+        week = week or await self._viewing_week(league)
         team = await self.user_team(league)
         if team is None:
             raise NotFoundError("We could not find your team in this league.")

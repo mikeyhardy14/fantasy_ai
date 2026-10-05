@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24 * 7
+
+    @field_validator("jwt_secret", mode="before")
+    @classmethod
+    def jwt_secret_nonempty(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return "change-me-in-production"
+        return value
 
     credentials_key: str | None = None  # Fernet key for the Sleeper token and future OAuth tokens
 

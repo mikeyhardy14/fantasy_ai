@@ -83,6 +83,9 @@ def test_map_matchup():
     assert m.points == 120.5
     assert m.player_points["1001"] == 22.1
     assert m.projected_points is None
+    lined = mappers.map_matchup(fx.MATCHUPS_W3[0], week=3, roster_positions=fx.LEAGUE["roster_positions"])
+    flex = next(entry for entry in lined.roster_entries if entry.roster_slot == "FLEX")
+    assert flex.external_player_id == "2003" and flex.is_starter
 
 
 def test_map_player_and_team_defense():

@@ -78,7 +78,9 @@ class SleeperProvider(FantasyProvider):
         players = await self.get_players()
         return [p for pid, p in players.items() if pid not in rostered and p.is_fantasy_relevant]
 
-    async def fetch_league_snapshot(self, league_id: str, *, weeks_back: int = 3) -> ImportedLeagueSnapshot:
+    async def fetch_league_snapshot(
+        self, league_id: str, *, weeks_back: int = 3, weeks_forward: int = 1
+    ) -> ImportedLeagueSnapshot:
         """Sleeper-optimised: fetch the raw league once and reuse it."""
         raw_league = await self.client.get_league(league_id)
         fallback_week = None
@@ -92,11 +94,15 @@ class SleeperProvider(FantasyProvider):
         rosters = [mappers.map_roster(r, league.roster_positions) for r in raw_rosters]
         players = await self.get_players()
 
-        weeks = [w for w in range(league.current_week - weeks_back, league.current_week + 1) if w >= 1]
+        start = max(1, league.current_week - weeks_back)
+        end = min(18, league.current_week + weeks_forward)
+        tx_weeks = [w for w in range(league.current_week - weeks_back, league.current_week + 1) if w >= 1]
         matchups: list[MatchupData] = []
         transactions: list[TransactionData] = []
-        for week in weeks:
-            matchups.extend(await self.get_matchups(league_id, week))
+        for week in range(start, end + 1):
+            raw = await self.client.get_matchups(league_id, week)
+            matchups.extend(mappers.map_matchup(m, week, league.roster_positions) for m in raw)
+        for week in tx_weeks:
             transactions.extend(await self.get_transactions(league_id, week))
 
         return ImportedLeagueSnapshot(

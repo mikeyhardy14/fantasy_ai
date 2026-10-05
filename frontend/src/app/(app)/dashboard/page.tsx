@@ -25,6 +25,7 @@ import { api } from "@/lib/api";
 import { useLeague } from "@/lib/league";
 import { recAction, recKey, readDismissed, writeDismissed } from "@/lib/rec-actions";
 import { keys, useBriefing, useHealth, useLeagueDetail, useLeagueMatchups, useMatchup, useRecommendations, useStandings, useTeam, useTransactions } from "@/lib/queries";
+import { boardWeek } from "@/lib/week";
 import type { Recommendation, RosterSlot } from "@/lib/types";
 import { cn, formatPoints } from "@/lib/utils";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -44,10 +45,23 @@ export default function DashboardPage() {
 function Dashboard({ leagueId }: { leagueId: string }) {
   const { selected } = useLeague();
   const team = useTeam(leagueId);
-  const detail = useLeagueDetail(leagueId);
-  const recs = useRecommendations(leagueId);
   const standings = useStandings(leagueId);
-  const txs = useTransactions(leagueId);
+  const providerWeek = selected?.current_week ?? team.data?.week ?? 1;
+  const providerBoard = useMatchup(leagueId, providerWeek, false);
+  const currentWeek = boardWeek(providerWeek, providerBoard.data?.games);
+  const [picked, setPicked] = useState<number | null>(null);
+  const week = picked ?? currentWeek;
+
+  useEffect(() => {
+    setPicked(null);
+  }, [leagueId]);
+  const leagueGames = useLeagueMatchups(leagueId, week, week === currentWeek ? 60_000 : false);
+  const weekGames = useMatchup(leagueId, week, week === currentWeek ? 15_000 : false);
+  const extras = weekGames.isFetched || leagueGames.isFetched;
+  const detail = useLeagueDetail(leagueId, extras);
+  const recs = useRecommendations(leagueId, extras);
+  const txs = useTransactions(leagueId, extras);
+  const health = useHealth(extras);
   const toast = useToast();
   const router = useRouter();
   const [briefingRequested, setBriefingRequested] = useState(false);
@@ -60,11 +74,6 @@ function Dashboard({ leagueId }: { leagueId: string }) {
   });
   const qc = useQueryClient();
   const [lineupNotice, setLineupNotice] = useState<string | null>(null);
-  const health = useHealth();
-  const currentWeek = selected?.current_week ?? team.data?.week ?? 1;
-  const [week, setWeek] = useState(currentWeek);
-  const leagueGames = useLeagueMatchups(leagueId, week, week === currentWeek ? 60_000 : false);
-  const weekGames = useMatchup(leagueId, week, week === currentWeek ? 15_000 : false);
   const writesEnabled = selected?.provider === "sleeper" && !!detail.data?.account.writes_enabled;
   const reserveSlots = Number(detail.data?.roster_settings?.reserve_slots ?? 0);
   const reservePositions = Array.isArray(detail.data?.roster_settings?.roster_positions)
@@ -73,7 +82,7 @@ function Dashboard({ leagueId }: { leagueId: string }) {
   const movePlayer = useMutation({
     mutationFn: (move: { playerId: string; destination: "starter" | "bench" | "ir"; slotIndex?: number }) =>
       api.leagues.movePlayer(leagueId, {
-        week: team.data?.week ?? selected?.current_week ?? 1,
+        week,
         player_id: move.playerId,
         destination: move.destination,
         slot_index: move.slotIndex,
@@ -112,7 +121,6 @@ function Dashboard({ leagueId }: { leagueId: string }) {
       const action = recAction(rec);
       if (action === "open") return { kind: "open" as const, rec };
       if (!writesEnabled) throw new Error("Save a Sleeper token in Settings to do this.");
-      const week = team.data?.week ?? selected?.current_week ?? 1;
       if (action === "do") {
         const slotIndex =
           typeof rec.data.slot_index === "number"
@@ -161,7 +169,7 @@ function Dashboard({ leagueId }: { leagueId: string }) {
         <Stat value={team.data ? faab : undefined} />
         {team.isFetched ? <UpdatedAgo at={team.dataUpdatedAt} /> : null}
         <div className="ml-auto flex items-center gap-2">
-          <Select className="h-8 w-[7.5rem] text-xs" value={week} onChange={(event) => setWeek(Number(event.target.value))} aria-label="League week">
+          <Select className="h-8 w-[7.5rem] text-xs" value={week} onChange={(event) => setPicked(Number(event.target.value))} aria-label="League week">
             {Array.from({ length: 18 }, (_, index) => index + 1).map((value) => (
               <option key={value} value={value}>
                 Wk {value}
@@ -176,8 +184,8 @@ function Dashboard({ leagueId }: { leagueId: string }) {
       </div>
       {analyze.error ? <ErrorState error={analyze.error} title="Analysis failed" onRetry={() => analyze.mutate()} className="rounded-lg border border-red-500/20" /> : null}
 
-      <div className="grid items-start gap-2 lg:grid-cols-12">
-        <div className="flex flex-col gap-2 lg:col-span-4">
+      <div className="grid items-start gap-3 lg:grid-cols-12">
+        <div className="flex flex-col gap-3 lg:col-span-6">
           <Pane title="Games" action={<span className="text-[11px] text-slate-500">Wk {week}</span>}>
             {leagueGames.isLoading ? (
               <div className="p-3"><SkeletonRows rows={6} /></div>
@@ -188,7 +196,9 @@ function Dashboard({ leagueId }: { leagueId: string }) {
             )}
           </Pane>
           <Pane title="NFL Games" action={liveNfl ? <span className="text-[11px] font-medium text-red-300">{liveNfl} live</span> : null}>
-            {weekGames.data?.games?.length ? (
+            {weekGames.isLoading ? (
+              <div className="p-3"><SkeletonRows rows={8} /></div>
+            ) : weekGames.data?.games?.length ? (
               <NflSlate games={weekGames.data.games} compact slots={slotsFromMatchups(leagueGames.data ?? [])} />
             ) : (
               <p className="px-3 py-3 text-xs text-slate-500">No NFL games this week.</p>
@@ -198,7 +208,7 @@ function Dashboard({ leagueId }: { leagueId: string }) {
 
         <Pane
           title="Matchup"
-          className="lg:col-span-5"
+          className="lg:col-span-4"
           action={
             <button type="button" className="text-[11px] text-emerald-200 hover:underline" onClick={() => setPanel("lineup")}>
               Lineup
@@ -259,8 +269,8 @@ function Dashboard({ leagueId }: { leagueId: string }) {
           )}
         </Pane>
 
-        <div className="flex min-h-0 flex-col gap-2 lg:col-span-3">
-          <Pane title="Standings" className="min-h-0 flex-1" action={<Link href="/teams" className="text-[11px] text-emerald-200 hover:underline">All</Link>}>
+        <div className="flex min-h-0 flex-col gap-2 lg:col-span-2">
+          <Pane title="Standings" className="flex-1" action={<Link href="/teams" className="text-[11px] text-emerald-200 hover:underline">All</Link>}>
             {standings.isLoading ? (
               <div className="p-3"><SkeletonRows rows={8} /></div>
             ) : (
@@ -424,12 +434,15 @@ function StarterRow({ slot }: { slot: RosterSlot }) {
 
 function DashboardSkeleton() {
   return (
-    <div className="space-y-2">
+    <div className="flex flex-col gap-2 pb-20">
       <Skeleton className="h-7 w-64" />
-      <div className="grid gap-2 lg:grid-cols-3">
-        <Skeleton className="h-64 w-full" />
-        <Skeleton className="h-64 w-full" />
-        <Skeleton className="h-64 w-full" />
+      <div className="grid items-start gap-3 lg:grid-cols-12">
+        <div className="flex flex-col gap-3 lg:col-span-6">
+          <Skeleton className="h-56 w-full" />
+          <Skeleton className="h-80 w-full" />
+        </div>
+        <Skeleton className="h-[28rem] w-full lg:col-span-4" />
+        <Skeleton className="h-72 w-full lg:col-span-2" />
       </div>
     </div>
   );

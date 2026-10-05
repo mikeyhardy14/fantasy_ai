@@ -45,6 +45,10 @@ describe("MatchupSlate", () => {
     expect(screen.queryByText("Gridiron Gurus")).not.toBeInTheDocument();
     expect(screen.getByText("Touchdown Titans")).toBeInTheDocument();
     expect(screen.getByText("Blitz Brigade")).toBeInTheDocument();
+    expect(screen.getByText("88.0")).toBeInTheDocument();
+    expect(screen.getByText("91.0")).toBeInTheDocument();
+    expect(screen.getByText("Upcoming")).toBeInTheDocument();
+    expect(screen.getAllByText(/Proj 110.0/).length).toBeGreaterThan(0);
     expect(screen.queryByText("Touchdown Titans QB")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Starters" }));
     expect(screen.getByText("Touchdown Titans QB")).toBeInTheDocument();
@@ -59,6 +63,34 @@ describe("LeagueGames", () => {
     expect(screen.getByText("Touchdown Titans")).toBeInTheDocument();
     expect(screen.getByTestId("league-games").querySelector('[data-yours="true"]')).toHaveTextContent("Gridiron Gurus");
     expect(screen.getAllByTestId("league-game")).toHaveLength(2);
+    const yours = screen.getByTestId("league-games").querySelector('[data-yours="true"]');
+    expect(yours).toHaveTextContent("10.0");
+    expect(yours).toHaveTextContent("12.0");
+    expect(screen.getAllByText("Upcoming")).toHaveLength(2);
+    expect(screen.getAllByTestId("score-row").length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("shows Final when every NFL game is over", () => {
+    render(
+      <LeagueGames
+        games={[{ ...game("Gridiron Gurus", "Rivals", true), status: "in_progress" }]}
+        week={4}
+        nfl={[
+          {
+            away: "ATL",
+            home: "GB",
+            away_score: 17,
+            home_score: 7,
+            state: "post",
+            detail: "Final",
+            summary: null,
+            broadcast: "FOX",
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByText("Final")).toBeInTheDocument();
+    expect(screen.queryByText("Live")).not.toBeInTheDocument();
   });
 
   it("opens a game to compare starters", async () => {
