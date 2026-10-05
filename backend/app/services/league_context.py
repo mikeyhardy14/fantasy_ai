@@ -109,16 +109,35 @@ def _nfl_slate_final(nfl: list | None) -> bool:
     return bool(nfl) and all(getattr(game, "state", None) == "post" for game in nfl)
 
 
+def _player_has_played(slot) -> bool:
+    player = getattr(slot, "player", None)
+    if player is None:
+        return True
+    flags = getattr(slot, "flags", None) or []
+    if getattr(player, "on_bye", False) or "BYE" in flags:
+        return True
+    game = getattr(slot, "game", None)
+    if getattr(game, "state", None) == "post":
+        return True
+    return not getattr(player, "nfl_team", None)
+
+
+def _lineup_has_played(starters: list | None) -> bool:
+    rostered = [slot for slot in starters or [] if getattr(slot, "player", None) is not None]
+    return bool(rostered) and all(_player_has_played(slot) for slot in rostered)
+
+
 def _matchup_status(
     week: int,
     current_week: int,
     points: float,
     opponent_points: float | None,
     nfl: list | None = None,
+    starters: list | None = None,
 ) -> str:
     if opponent_points is None:
         return "bye"
-    if week < current_week or _nfl_slate_final(nfl):
+    if week < current_week or _nfl_slate_final(nfl) or _lineup_has_played(starters):
         return "final"
     if points == 0 and opponent_points == 0:
         return "upcoming"
@@ -833,7 +852,12 @@ class LeagueContextService:
             user=user,
             opponent=opponent,
             status=_matchup_status(
-                week, league.current_week, m.points, opponent.points if opponent else None, games
+                week,
+                league.current_week,
+                m.points,
+                opponent.points if opponent else None,
+                games,
+                [*user.starters, *(opponent.starters if opponent else [])],
             ),
             calls=_slot_calls(user, opponent),
             games=games,
@@ -890,6 +914,7 @@ class LeagueContextService:
                         team_side.points,
                         opponent_side.points if opponent_side else None,
                         nfl,
+                        [*team_side.starters, *(opponent_side.starters if opponent_side else [])],
                     ),
                     team=team_side,
                     opponent=opponent_side,
@@ -952,6 +977,7 @@ class LeagueContextService:
             view.user.points,
             view.opponent.points if view.opponent else None,
             view.games,
+            [*view.user.starters, *(view.opponent.starters if view.opponent else [])],
         )
 
     async def apply_live_week_points(self, league: League, games: list[LeagueMatchupOut], raw_sides: list[dict]) -> None:
@@ -975,6 +1001,7 @@ class LeagueContextService:
                 game.team.points,
                 game.opponent.points if game.opponent else None,
                 nfl,
+                [*game.team.starters, *(game.opponent.starters if game.opponent else [])],
             )
 
     async def _paint_live_points(

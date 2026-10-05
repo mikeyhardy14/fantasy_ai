@@ -6,24 +6,21 @@ import { ScoreBox, ScoreBoxSide, ScoreMark } from "@/components/matchup/score-bo
 import { Card, CardHeader } from "@/components/ui/card";
 import { Pop } from "@/components/ui/pop";
 import type { LeagueMatchup, MatchupSide, NflGame } from "@/lib/types";
+import { fantasyLabel } from "@/lib/matchup-status";
 import { cn, formatPoints } from "@/lib/utils";
 import Link from "next/link";
 import { useState } from "react";
 
-function slateOver(nfl: NflGame[] | undefined): boolean {
-  if (!nfl?.length) return false;
-  return nfl.every((game) => game.state === "post");
+function startersOf(game: LeagueMatchup) {
+  return [...game.team.starters, ...(game.opponent?.starters ?? [])];
 }
 
 function fantasyStatus(game: LeagueMatchup, nfl?: NflGame[]): string {
-  if (game.status === "bye") return "Bye";
-  if (game.status === "final" || slateOver(nfl)) return "Final";
-  if (game.status === "in_progress") return "Live";
-  return "Upcoming";
+  return fantasyLabel(game.status, startersOf(game), nfl);
 }
 
 function fantasyLive(game: LeagueMatchup, nfl?: NflGame[]): boolean {
-  return game.status === "in_progress" && !slateOver(nfl);
+  return fantasyStatus(game, nfl) === "Live";
 }
 
 function sideAhead(game: LeagueMatchup, which: "team" | "opponent"): boolean {
@@ -172,7 +169,7 @@ export function LeagueGames({
               detail={sideDetail(open.opponent)}
               ahead={sideAhead(open, "opponent")}
             />
-            <p className="text-xs text-slate-400">{open.status.replace("_", " ")}</p>
+            <p className="text-xs text-slate-400">{fantasyStatus(open, nfl)}</p>
           </div>
           <div className="border-b border-white/10">
             <p className="px-4 pt-3 text-[11px] font-medium uppercase tracking-wide text-slate-500">

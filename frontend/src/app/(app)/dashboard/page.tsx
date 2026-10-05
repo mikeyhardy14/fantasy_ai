@@ -25,6 +25,7 @@ import { api } from "@/lib/api";
 import { useLeague } from "@/lib/league";
 import { recAction, recKey, readDismissed, writeDismissed } from "@/lib/rec-actions";
 import { keys, useBriefing, useHealth, useLeagueDetail, useLeagueMatchups, useMatchup, useRecommendations, useStandings, useTeam, useTransactions } from "@/lib/queries";
+import { fantasyLabel } from "@/lib/matchup-status";
 import { boardWeek } from "@/lib/week";
 import type { Recommendation, RosterSlot } from "@/lib/types";
 import { cn, formatPoints } from "@/lib/utils";
@@ -232,7 +233,13 @@ function Dashboard({ leagueId }: { leagueId: string }) {
                   href="/team"
                   highlight
                 />
-                <span className="text-[10px] uppercase tracking-wide text-slate-500">{weekGames.data.status.replace("_", " ")}</span>
+                <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                  {fantasyLabel(
+                    weekGames.data.status,
+                    [...weekGames.data.user.starters, ...(weekGames.data.opponent?.starters ?? [])],
+                    weekGames.data.games,
+                  )}
+                </span>
                 {weekGames.data.opponent ? (
                   <MatchSide
                     name={weekGames.data.opponent.team.name}

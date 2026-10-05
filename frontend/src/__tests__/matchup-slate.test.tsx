@@ -93,6 +93,70 @@ describe("LeagueGames", () => {
     expect(screen.queryByText("Live")).not.toBeInTheDocument();
   });
 
+  it("shows Final when every starter has played, even if another NFL game is live", () => {
+    const played = game("Gridiron Gurus", "Rivals", true);
+    for (const side of [played.team, played.opponent!]) {
+      side.starters = side.starters.map((entry) => ({
+        ...entry,
+        game: {
+          projected_points: 14,
+          points: entry.points,
+          stat_line: null,
+          opponent: "BUF",
+          home: true,
+          away: "BUF",
+          home_team: "KC",
+          away_score: 10,
+          home_score: 17,
+          state: "post" as const,
+          clock: "Final",
+        },
+      }));
+    }
+    render(
+      <LeagueGames
+        games={[{ ...played, status: "in_progress" }]}
+        week={4}
+        nfl={[
+          {
+            away: "SEA",
+            home: "LAR",
+            away_score: 7,
+            home_score: 3,
+            state: "in",
+            detail: "8:22 - 2nd",
+            summary: null,
+            broadcast: "NBC",
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByText("Final")).toBeInTheDocument();
+    expect(screen.queryByText("Live")).not.toBeInTheDocument();
+  });
+
+  it("stays Live while a starter's game is still going", () => {
+    const playing = game("Gridiron Gurus", "Rivals", true);
+    playing.team.starters = playing.team.starters.map((entry) => ({
+      ...entry,
+      game: {
+        projected_points: 14,
+        points: entry.points,
+        stat_line: null,
+        opponent: "BUF",
+        home: true,
+        away: "BUF",
+        home_team: "KC",
+        away_score: 10,
+        home_score: 7,
+        state: "in" as const,
+        clock: "8:22 - 2nd",
+      },
+    }));
+    render(<LeagueGames games={[{ ...playing, status: "in_progress" }]} week={4} />);
+    expect(screen.getByText("Live")).toBeInTheDocument();
+  });
+
   it("opens a game to compare starters", async () => {
     const user = userEvent.setup();
     render(<LeagueGames games={[game("Gridiron Gurus", "Rivals", true), game("Touchdown Titans", "Blitz Brigade")]} week={4} />);

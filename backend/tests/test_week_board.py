@@ -64,6 +64,17 @@ def test_matchup_is_final_when_every_nfl_game_is_over():
     assert _matchup_status(4, 4, 110.0, 98.0, []) == "in_progress"
 
 
+def test_matchup_is_final_when_every_starter_has_played():
+    def starter(state: str):
+        return SimpleNamespace(player=SimpleNamespace(on_bye=False, nfl_team="KC"), flags=[], game=SimpleNamespace(state=state))
+
+    live_slate = [SimpleNamespace(state="in"), SimpleNamespace(state="pre")]
+    done = [starter("post"), starter("post")]
+    still_playing = [starter("post"), starter("in")]
+    assert _matchup_status(4, 4, 110.0, 98.0, live_slate, done) == "final"
+    assert _matchup_status(4, 4, 110.0, 98.0, live_slate, still_playing) == "in_progress"
+
+
 def test_board_week_advances_on_tuesday_when_the_slate_is_final():
     tuesday = datetime(2026, 9, 29, 15, tzinfo=timezone.utc)
     monday = datetime(2026, 9, 28, 20, tzinfo=timezone.utc)
