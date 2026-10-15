@@ -9,6 +9,7 @@ import { EmptyState, InlineError, SkeletonRows } from "@/components/ui/states";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useLeague } from "@/lib/league";
+import { readShowBettingLines, writeShowBettingLines } from "@/lib/betting-lines";
 import { readLineupAutoApprove, writeLineupAutoApprove } from "@/lib/lineup-approval";
 import { useHealth } from "@/lib/queries";
 import { aiStatusLabel, formatDate, PROVIDER_LABELS } from "@/lib/utils";
@@ -50,6 +51,7 @@ export default function SettingsPage() {
         </Card>
 
         <AssistantApproval />
+        <BettingLines />
 
         <Card>
           <CardHeader title="Server" />
@@ -171,6 +173,35 @@ function AssistantApproval() {
             <span className="font-medium text-slate-100">Auto-approve lineup moves</span>
             <span className="mt-1 block text-xs leading-relaxed text-slate-400">
               A recommended start-over is written to this week&apos;s lineup as soon as the assistant proposes it. Leave this off and the chat shows the move for you to approve. Adds and drops always wait for approval.
+            </span>
+          </span>
+        </label>
+      </CardBody>
+    </Card>
+  );
+}
+
+function BettingLines() {
+  const [on, setOn] = useState(false);
+  useEffect(() => setOn(readShowBettingLines()), []);
+  return (
+    <Card>
+      <CardHeader title="Display" description="What shows next to projections." />
+      <CardBody>
+        <label className="flex items-start gap-3 text-sm">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={on}
+            onChange={(event) => {
+              writeShowBettingLines(event.target.checked);
+              setOn(event.target.checked);
+            }}
+          />
+          <span>
+            <span className="font-medium text-slate-100">Show betting lines</span>
+            <span className="mt-1 block text-xs leading-relaxed text-slate-400">
+              Adds game totals, spreads, implied team points and prop odds to rankings and player sheets. Projections use the same numbers either way.
             </span>
           </span>
         </label>

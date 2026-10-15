@@ -67,6 +67,7 @@ export const FLAG_LABELS: Record<Flag, { label: string; className: string }> = {
   INJURED: { label: "INJ", className: "bg-amber-500/20 text-amber-200 ring-amber-500/40" },
   INACTIVE: { label: "INACTIVE", className: "bg-slate-500/20 text-slate-300 ring-slate-500/40" },
   FREE_AGENT_NFL: { label: "FA", className: "bg-slate-500/20 text-slate-300 ring-slate-500/40" },
+  LOCKED: { label: "LOCKED", className: "bg-slate-500/20 text-slate-300 ring-slate-500/40" },
 };
 
 export const GRADE_STYLES: Record<string, string> = {

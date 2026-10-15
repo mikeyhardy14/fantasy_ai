@@ -26,7 +26,16 @@ const sheet: PlayerSheet = {
 };
 
 describe("PlayerSheetDialog", () => {
+  it("leaves prop odds out unless betting lines are on", () => {
+    window.localStorage.removeItem("omaha.show-betting-lines");
+    render(<PlayerSheetDialog sheet={sheet} loading={false} error={null} onClose={() => undefined} />);
+    expect(screen.getByText("Quinn Arrow")).toBeInTheDocument();
+    expect(screen.queryByText("Odds")).not.toBeInTheDocument();
+    expect(screen.getByText("Pass yds")).toBeInTheDocument();
+  });
+
   it("shows the prop math and recent stats in tables", () => {
+    window.localStorage.setItem("omaha.show-betting-lines", "1");
     render(<PlayerSheetDialog sheet={sheet} loading={false} error={null} onClose={() => undefined} />);
     expect(screen.getByText("Quinn Arrow")).toBeInTheDocument();
     expect(screen.getByText(/40\.1 total/)).toBeInTheDocument();
@@ -41,6 +50,7 @@ describe("PlayerSheetDialog", () => {
     expect(screen.getByText("19.4")).toBeInTheDocument();
     expect(screen.getByText("Points: This league.")).toBeInTheDocument();
     expect(screen.getByTestId("rostered-on")).toHaveTextContent("Free agent");
+    window.localStorage.removeItem("omaha.show-betting-lines");
   });
 
   it("names the fantasy team and sends the offer the assistant wrote", async () => {

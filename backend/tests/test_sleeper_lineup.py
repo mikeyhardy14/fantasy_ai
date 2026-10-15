@@ -930,3 +930,47 @@ async def test_move_is_refused_when_sleeper_lineup_moved_since_the_last_read(cli
     after, _, _ = await _lineup(client, auth_headers, league["id"])
     assert _player(after, "2003")["group"] == "starters"
     assert _player(after, "2001")["group"] == "bench"
+
+
+async def test_moves_refuse_players_whose_game_has_started(client, auth_headers, sleeper_mock, monkeypatch):
+    from app.schemas.league import NflGameOut
+    from app.services.league_context import LeagueContextService
+
+    async def board(self, league, week):
+        return [NflGameOut(away="SF", home="SEA", state="in"), NflGameOut(away="LAR", home="ARI", state="pre")], {}
+
+    monkeypatch.setattr(LeagueContextService, "_current_board", board)
+    seen = install_graphql(sleeper_mock, {})
+    league = await _import(client, auth_headers)
+    await _save_token(client, auth_headers)
+    team, _, starter_ids = await _lineup(client, auth_headers, league["id"])
+    assert "LOCKED" in next(slot for slot in team["starters"] if slot["slot_index"] == 1)["flags"]
+    before = len(seen["queries"])
+
+    # Dash Ground (SF) is playing right now.
+    locked = await client.post(
+        f"/api/leagues/{league['id']}/lineup/move",
+        json={"week": 4, "player_id": _player(team, "2001")["id"], "destination": "bench"},
+        headers=auth_headers,
+    )
+    assert locked.status_code == 422
+    assert "locked" in locked.json()["error"]["message"]
+
+    swapped = starter_ids.copy()
+    swapped[1] = _player(team, "2003")["id"]
+    whole = await client.post(
+        f"/api/leagues/{league['id']}/lineup",
+        json={"week": 4, "starter_player_ids": swapped},
+        headers=auth_headers,
+    )
+    assert whole.status_code == 422
+    assert "locked" in whole.json()["error"]["message"]
+    assert not any("update_matchup_leg" in query for query in seen["queries"][before:])
+
+    # Deep Threat (LAR) has not kicked off, so he can still move.
+    free = await client.post(
+        f"/api/leagues/{league['id']}/lineup/move",
+        json={"week": 4, "player_id": _player(team, "3003")["id"], "destination": "bench"},
+        headers=auth_headers,
+    )
+    assert free.status_code == 200, free.text

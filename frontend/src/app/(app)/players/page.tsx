@@ -46,7 +46,8 @@ function PlayersView({ leagueId, week }: { leagueId: string; week: number }) {
   const [position, setPosition] = useState("");
   const [team, setTeam] = useState("");
   const [lens, setLens] = useState("");
-  const [scope, setScope] = useState("");
+  // Free agents first: most visits here are to find someone to add.
+  const [scope, setScope] = useState("available");
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [notice, setNotice] = useState<string | null>(null);

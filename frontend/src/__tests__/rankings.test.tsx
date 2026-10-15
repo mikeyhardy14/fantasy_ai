@@ -33,7 +33,17 @@ const rankings: Rankings = {
 };
 
 describe("RankingsTable", () => {
+  it("hides betting lines unless the setting is on", () => {
+    window.localStorage.removeItem("omaha.show-betting-lines");
+    render(<RankingsTable rankings={rankings} />);
+    expect(screen.getByText("Quinn Arrow")).toBeInTheDocument();
+    expect(screen.getByText("17.3")).toBeInTheDocument();
+    expect(screen.queryByText("Implied")).not.toBeInTheDocument();
+    expect(screen.queryByText("O/U 47 · -3")).not.toBeInTheDocument();
+  });
+
   it("shows the implied total, projection, and value", () => {
+    window.localStorage.setItem("omaha.show-betting-lines", "1");
     render(<RankingsTable rankings={rankings} />);
     expect(screen.getByText("Quinn Arrow")).toBeInTheDocument();
     expect(screen.queryByText(/Implied team points/)).not.toBeInTheDocument();
@@ -46,6 +56,7 @@ describe("RankingsTable", () => {
     expect(screen.getByRole("cell", { name: "88.4" })).toBeInTheDocument();
     expect(screen.getByText("+4.2")).toBeInTheDocument();
     expect(screen.queryByTestId("rank-sub")).toBeNull();
+    window.localStorage.removeItem("omaha.show-betting-lines");
   });
 
   it("subs the higher-projected backup into a rostered starter", async () => {

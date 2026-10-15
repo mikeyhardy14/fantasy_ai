@@ -33,7 +33,7 @@ export function FlagBadges({ flags, injury }: { flags: Flag[]; injury?: string |
       {flags.map((f) => {
         const meta = FLAG_LABELS[f];
         return (
-          <Badge key={f} className={meta.className} title={f === "BYE" ? "On bye this week" : injury ?? f}>
+          <Badge key={f} className={meta.className} title={f === "BYE" ? "On bye this week" : f === "LOCKED" ? "Game has started; Sleeper has locked this player" : injury ?? f}>
             {meta.label}
           </Badge>
         );

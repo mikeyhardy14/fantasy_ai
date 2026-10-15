@@ -8,12 +8,10 @@ import { PageHeader } from "@/components/shell/page-header";
 import { Skeleton } from "@/components/ui/states";
 import { api } from "@/lib/api";
 import { useLeague } from "@/lib/league";
-import { keys, useLeagueDetail } from "@/lib/queries";
+import { keys, matchupLive, pollWhile, teamLive, useLeagueDetail } from "@/lib/queries";
 import type { League, Matchup, Team } from "@/lib/types";
 import { useMutation, useQueries, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useState } from "react";
-
-const REFRESH_MS = 60_000;
 
 export function AllLeagues() {
   const { leagues, loading, select } = useLeague();
@@ -22,14 +20,14 @@ export function AllLeagues() {
     queries: leagues.map((league) => ({
       queryKey: keys.team(league.id),
       queryFn: () => api.leagues.team(league.id),
-      refetchInterval: REFRESH_MS,
+      refetchInterval: pollWhile(teamLive),
     })),
   });
   const matchups = useQueries({
     queries: leagues.map((league) => ({
       queryKey: keys.matchup(league.id),
       queryFn: () => api.leagues.matchup(league.id),
-      refetchInterval: REFRESH_MS,
+      refetchInterval: pollWhile(matchupLive),
     })),
   });
 
