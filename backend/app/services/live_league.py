@@ -40,7 +40,13 @@ async def ensure_live(
     providers: ProviderRegistry,
     *,
     db: Database | None = None,
+    wait: bool = False,
 ) -> None:
+    """Refresh the league from Sleeper.
+
+    ``wait=True`` is for writes: they build what they send to Sleeper from the
+    saved roster, so they wait for the refresh (or one already in flight).
+    """
     if league.provider != Provider.SLEEPER.value:
         return
     key = str(league.id)
@@ -48,13 +54,15 @@ async def ensure_live(
         return
 
     # Already imported once: serve the DB copy and refresh Sleeper off the request path.
-    if league.last_synced_at is not None and db is not None:
+    if league.last_synced_at is not None and db is not None and not wait:
         _schedule_background(league.id, providers, db)
         return
 
     lock = _locks.setdefault(key, asyncio.Lock())
     async with lock:
         if time.monotonic() - _fresh.get(key, 0) < _FRESH_SECONDS:
+            # A background refresh finished while this request waited on the lock.
+            await session.refresh(league)
             return
         # Prefer a dedicated session so list_leagues can refresh many leagues in parallel.
         if db is not None:
@@ -72,6 +80,15 @@ async def ensure_live(
 async def drain_background() -> None:
     """Wait for in-flight background refreshes (tests)."""
     pending = [task for task in list(_background.values()) if not task.done()]
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
+async def cancel_background() -> None:
+    """Stop in-flight background refreshes before the DB pool and HTTP client close."""
+    pending = [task for task in list(_background.values()) if not task.done()]
+    for task in pending:
+        task.cancel()
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
 

@@ -42,6 +42,7 @@ class SleeperClient:
         self._players_memo: tuple[float, dict[str, Any]] | None = None
         self._http: httpx.AsyncClient | None = None
         self._http_lock = asyncio.Lock()
+        self._players_lock = asyncio.Lock()
 
     # ---- low level ------------------------------------------------------------
 
@@ -147,18 +148,23 @@ class SleeperClient:
         if self._players_memo and now - self._players_memo[0] < self.player_cache_ttl_seconds:
             return self._players_memo[1]
 
-        cached = self._read_disk_cache(now)
-        if cached is not None:
-            self._players_memo = (now, cached)
-            return cached
+        # Parallel league refreshes share one download instead of each pulling ~5MB.
+        async with self._players_lock:
+            if self._players_memo and time.time() - self._players_memo[0] < self.player_cache_ttl_seconds:
+                return self._players_memo[1]
 
-        log.info("sleeper.fetch_players")
-        data = await self._get("/players/nfl")
-        if not isinstance(data, dict):
-            raise ProviderUnavailable("Sleeper players payload was malformed.", provider=self.PROVIDER)
-        self._players_memo = (now, data)
-        self._write_disk_cache(data)
-        return data
+            cached = self._read_disk_cache(now)
+            if cached is not None:
+                self._players_memo = (now, cached)
+                return cached
+
+            log.info("sleeper.fetch_players")
+            data = await self._get("/players/nfl")
+            if not isinstance(data, dict):
+                raise ProviderUnavailable("Sleeper players payload was malformed.", provider=self.PROVIDER)
+            self._players_memo = (now, data)
+            self._write_disk_cache(data)
+            return data
 
     # ---- cache helpers -------------------------------------------------------
 

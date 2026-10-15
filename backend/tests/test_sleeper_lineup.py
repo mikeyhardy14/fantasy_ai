@@ -875,3 +875,58 @@ async def test_direct_chat_is_only_with_managers_in_this_league(client, auth_hea
     assert seen["sent"]["parent_id"] == "dm-rival"
     assert seen["sent"]["parent_type"] == "dm"
     assert seen["sent"]["text"] == "Trade?"
+
+
+async def test_move_starts_from_the_lineup_set_in_the_sleeper_app(client, auth_headers, sleeper_mock):
+    """A write waits for Sleeper instead of building the lineup from an old saved copy."""
+    from copy import deepcopy
+
+    from app.services import live_league
+
+    seen = install_graphql(sleeper_mock, {})
+    league = await _import(client, auth_headers)
+    await _save_token(client, auth_headers)
+    team, _, _ = await _lineup(client, auth_headers, league["id"])
+    await live_league.drain_background()
+
+    # In the Sleeper app the user starts 2003 over 2001 at slot 1.
+    rosters = deepcopy(fx.ROSTERS)
+    rosters[0]["starters"][1] = "2003"
+    sleeper_mock.get(f"/league/{fx.LEAGUE_ID}/rosters").mock(return_value=Response(200, json=rosters))
+    live_league._fresh.clear()
+
+    resp = await client.post(
+        f"/api/leagues/{league['id']}/lineup/move",
+        json={"week": 4, "player_id": _player(team, "3003")["id"], "destination": "bench"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert seen["starters"][1] == "2003"
+
+
+async def test_move_is_refused_when_sleeper_lineup_moved_since_the_last_read(client, auth_headers, sleeper_mock):
+    """Sleeper's public roster lags; the authenticated lineup read is the last word."""
+    seen = install_graphql(sleeper_mock, {})
+    league = await _import(client, auth_headers)
+    await _save_token(client, auth_headers)
+    team, _, _ = await _lineup(client, auth_headers, league["id"])
+    changed = list(fx.ROSTERS[0]["starters"])
+    changed[1] = "2003"
+    seen["starters"] = changed
+    before = len(seen["queries"])
+
+    resp = await client.post(
+        f"/api/leagues/{league['id']}/lineup/move",
+        json={"week": 4, "player_id": _player(team, "3003")["id"], "destination": "bench"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 409, resp.text
+    assert "changed in Sleeper" in resp.json()["error"]["message"]
+    assert not any("update_matchup_leg" in query for query in seen["queries"][before:])
+
+    from app.services import live_league
+
+    live_league.mark_fresh(league["id"])
+    after, _, _ = await _lineup(client, auth_headers, league["id"])
+    assert _player(after, "2003")["group"] == "starters"
+    assert _player(after, "2001")["group"] == "bench"

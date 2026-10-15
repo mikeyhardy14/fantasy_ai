@@ -8,6 +8,7 @@ from app.api.deps import (
     CipherDep,
     ContextService,
     CurrentUser,
+    FreshOwnedLeague,
     OwnedLeague,
     Providers,
     SessionDep,
@@ -110,7 +111,7 @@ async def get_league_team(
 @router.post("/{league_id}/lineup", response_model=LineupUpdateResponse)
 async def update_lineup(
     body: LineupUpdateRequest,
-    league: OwnedLeague,
+    league: FreshOwnedLeague,
     session: SessionDep,
     providers: Providers,
     ctx: ContextService,
@@ -124,7 +125,7 @@ async def update_lineup(
 @router.post("/{league_id}/roster/add", response_model=LineupUpdateResponse)
 async def add_player(
     body: AddPlayerRequest,
-    league: OwnedLeague,
+    league: FreshOwnedLeague,
     session: SessionDep,
     providers: Providers,
     ctx: ContextService,
@@ -138,7 +139,7 @@ async def add_player(
 @router.post("/{league_id}/lineup/move", response_model=LineupUpdateResponse)
 async def move_player(
     body: RosterMoveRequest,
-    league: OwnedLeague,
+    league: FreshOwnedLeague,
     session: SessionDep,
     providers: Providers,
     ctx: ContextService,
@@ -358,7 +359,7 @@ async def get_trades(league: OwnedLeague, ctx: ContextService) -> list[Transacti
 @router.post("/{league_id}/trades", response_model=ProposeTradeResponse)
 async def propose_trade(
     body: ProposeTradeRequest,
-    league: OwnedLeague,
+    league: FreshOwnedLeague,
     session: SessionDep,
     providers: Providers,
     ctx: ContextService,
@@ -371,7 +372,7 @@ async def propose_trade(
 
 @router.post("/{league_id}/trades/{transaction_id}/respond", response_model=RespondTradeResponse)
 async def respond_to_trade(
-    league: OwnedLeague,
+    league: FreshOwnedLeague,
     transaction_id: str,
     body: RespondTradeRequest,
     session: SessionDep,

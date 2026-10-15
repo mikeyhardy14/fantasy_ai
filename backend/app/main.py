@@ -18,6 +18,7 @@ from app.core.errors import AppError
 from app.core.logging import configure_logging, get_logger
 from app.services.auto_reply import auto_reply_loop, ensure_auto_reply_tables
 from app.services.lineup_management import ensure_lineup_management_table
+from app.services.live_league import cancel_background
 
 log = get_logger(__name__)
 REQUEST_ID = re.compile(r"[A-Za-z0-9-]{1,64}")
@@ -49,6 +50,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
             watcher.cancel()
             with suppress(asyncio.CancelledError):
                 await watcher
+        await cancel_background()
         await container.providers.aclose()
         await container.db.dispose()
         log.info("app.shutdown")
