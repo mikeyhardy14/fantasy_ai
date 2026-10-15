@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, tokenStore } from "./api";
+import { clearSessionDb } from "./session-db";
 import type { TokenResponse, User } from "./types";
 
 interface AuthState {
@@ -52,6 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     tokenStore.clear();
     setUser(null);
     queryClient.clear();
+    clearSessionDb();
     router.push("/login");
   }, [queryClient, router]);
 
@@ -59,6 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const handler = () => {
       setUser(null);
       queryClient.clear();
+      clearSessionDb();
       router.push("/login");
     };
     window.addEventListener("fantasy-ai:unauthorized", handler);

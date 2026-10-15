@@ -110,7 +110,11 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 async def get_owned_league(
-    league_id: UUID, session: SessionDep, user: CurrentUser, providers: Providers
+    league_id: UUID,
+    session: SessionDep,
+    user: CurrentUser,
+    providers: Providers,
+    settings: SettingsDep,
 ) -> League:
     """Authorization boundary for every /leagues/{league_id} route."""
     league = await LeagueRepository(session).get_owned(user.id, league_id)
@@ -118,7 +122,7 @@ async def get_owned_league(
         raise NotFoundError("League not found.")
     from app.services.live_league import ensure_live
 
-    await ensure_live(league, session, providers)
+    await ensure_live(league, session, providers, settings=settings)
     return league
 
 

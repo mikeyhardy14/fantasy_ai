@@ -60,15 +60,11 @@ POSITIONS = {"QB", "RB", "WR", "TE", "FLEX", "K", "DEF", "DL", "LB", "DB"}
 
 
 @router.get("", response_model=list[LeagueOut])
-async def list_leagues(
-    user: CurrentUser, session: SessionDep, ctx: ContextService, providers: Providers
-) -> list[LeagueOut]:
+async def list_leagues(user: CurrentUser, session: SessionDep, ctx: ContextService) -> list[LeagueOut]:
+    """League list reads the session DB only — no Sleeper round-trip per league."""
     from app.repositories import LeagueRepository
-    from app.services.live_league import ensure_live
 
     leagues = await LeagueRepository(session).list_for_user(user.id)
-    for league in leagues:
-        await ensure_live(league, session, providers)
     return [await ctx.league_out(lg) for lg in leagues]
 
 

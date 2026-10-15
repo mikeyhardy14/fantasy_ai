@@ -138,12 +138,22 @@ async def test_import_league_and_dashboard(client, auth_headers, sleeper_mock, s
     assert tx["drops"][0]["player_name"] == "Dropped Guy"
 
 
-async def test_opening_a_league_reads_sleeper_live(client, auth_headers, sleeper_mock):
+async def test_opening_a_league_reads_sleeper_live(client, auth_headers, sleeper_mock, session, state):
     from copy import deepcopy
+    from datetime import UTC, datetime, timedelta
+    from uuid import UUID
 
     from httpx import Response
 
+    from app.models import League
+
     league = await import_league(client, auth_headers)
+    # Age the session so ensure_live must re-pull from Sleeper.
+    row = await session.get(League, UUID(league["id"]))
+    assert row is not None
+    row.last_synced_at = datetime.now(UTC) - timedelta(seconds=state.settings.sleeper_live_ttl_seconds + 5)
+    await session.commit()
+
     rosters = deepcopy(fx.ROSTERS)
     rosters[0]["settings"]["wins"] = 9
     rosters[0]["starters"] = ["2003", *rosters[0]["starters"][1:]]
@@ -154,6 +164,30 @@ async def test_opening_a_league_reads_sleeper_live(client, auth_headers, sleeper
     body = resp.json()
     assert body["team"]["wins"] == 9
     assert body["starters"][0]["player"]["name"] == "Flash Backup"
+
+
+async def test_fresh_session_skips_sleeper(client, auth_headers, sleeper_mock):
+    """A recently synced league is served from the session DB without Sleeper."""
+    from httpx import Response
+
+    league = await import_league(client, auth_headers)
+    sleeper_mock.reset()
+    sleeper_mock.get(f"/league/{fx.LEAGUE_ID}").mock(return_value=Response(500, json={"error": "nope"}))
+    sleeper_mock.get(f"/league/{fx.LEAGUE_ID}/rosters").mock(return_value=Response(500, json={"error": "nope"}))
+
+    resp = await client.get(f"/api/leagues/{league['id']}/team", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["team"]["name"]
+
+
+async def test_list_leagues_uses_session_db_only(client, auth_headers, sleeper_mock):
+    await import_league(client, auth_headers)
+    sleeper_mock.reset()
+
+    resp = await client.get("/api/leagues", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()) == 1
+    assert sleeper_mock.calls.call_count == 0
 
 
 async def test_sync_is_idempotent(client, auth_headers, sleeper_mock, session):

@@ -3,7 +3,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
 
-const LIVE_MS = 15_000;
+/** Poll interval for screens that show live scores. Backend serves the session DB within TTL. */
+const LIVE_MS = 60_000;
 
 export const keys = {
   league: (id: string) => ["league", id] as const,

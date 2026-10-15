@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     sleeper_timeout_seconds: float = 15.0
     sleeper_player_cache_path: Path = BACKEND_DIR / ".cache" / "sleeper_players.json"
     sleeper_player_cache_ttl_hours: int = 24
+    # How long a synced league session stays in the DB before a page load
+    # re-pulls from Sleeper. Longer = faster loads; Sync still forces a full pull.
+    sleeper_live_ttl_seconds: int = 180
     default_season: int = 2026
 
     nfl_data_file: Path = BACKEND_DIR / "data" / "nfl_data.json"
