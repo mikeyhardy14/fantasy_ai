@@ -28,7 +28,7 @@ function TeamsView({ leagueId, currentWeek }: { leagueId: string; currentWeek: n
   const [week, setWeek] = useState(currentWeek);
   const [layout, setLayout] = useState<"list" | "rosters" | "compare">(compareId ? "compare" : "list");
   const [query, setQuery] = useState("");
-  const rosters = useLeagueRosters(leagueId, week);
+  const rosters = useLeagueRosters(leagueId, week === currentWeek ? undefined : week);
   const needle = query.trim().toLowerCase();
   const teams = useMemo(() => {
     const rows = rosters.data ?? [];

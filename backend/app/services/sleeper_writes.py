@@ -178,6 +178,10 @@ class SleeperWriteService:
         token = self._token_for(league.fantasy_account)
         graphql = SleeperGraphQL(self.graphql_url, token)
         roster_id = _roster_id(team.external_team_id)
+        if all(entry.player.external_id_for(Provider.SLEEPER) for entry in entries):
+            await self._guard_unchanged(
+                graphql, league, team.id, body.week, roster_id, [_seat(e) for e in entries], lineup_slots
+            )
         try:
             await graphql.set_scoring_lineup(
                 week=body.week,
@@ -322,6 +326,7 @@ class SleeperWriteService:
         token = self._token_for(league.fantasy_account)
         graphql = SleeperGraphQL(self.graphql_url, token)
         roster_id = _roster_id(team.external_team_id)
+        await self._guard_unchanged(graphql, league, team.id, body.week, roster_id, roster, lineup_slots)
         applied_starters = starters
         applied_reserve = reserve
         public_starters: bool | None = True
@@ -768,6 +773,53 @@ class SleeperWriteService:
             players = roster.get("players") or []
             return str(player_id) in {str(item) for item in players}
         return False
+
+    async def _guard_unchanged(
+        self,
+        graphql: SleeperGraphQL,
+        league: League,
+        team_id: UUID,
+        week: int,
+        roster_id: int,
+        roster: list["_Seat"],
+        lineup_slots: list[str],
+    ) -> None:
+        """Refuse to write over a lineup or IR list that changed in Sleeper since Omaha saved it.
+
+        Writes send the whole starters and reserve lists, so a stale local copy would
+        silently undo a change made in the Sleeper app. When Sleeper's lineup can be
+        placed on the local roster, it is saved so the next attempt starts from it.
+        """
+        starters = _aligned_starters(roster, lineup_slots)
+        reserve = [row.external_id for row in roster if row.slot == "IR"]
+        try:
+            live_starters = await graphql.read_scoring_lineup(
+                week=week, league_id=league.external_league_id, roster_id=roster_id
+            )
+            live_reserve = await graphql.read_reserve(league_id=league.external_league_id, roster_id=roster_id)
+        except (ProviderError, ProviderAuthError) as exc:
+            # The write is still confirmed by its own read-back afterwards.
+            log.warning("sleeper.lineup_preread_failed", league_id=league.external_league_id, error=str(exc))
+            return
+        starters_moved = live_starters is not None and normalize_starters(live_starters) != starters
+        reserve_moved = live_reserve is not None and _id_set(live_reserve) != _id_set(reserve)
+        if not starters_moved and not reserve_moved:
+            return
+        current_starters = normalize_starters(live_starters) if starters_moved else starters
+        current_reserve = set(_id_set(live_reserve)) if reserve_moved else set(_id_set(reserve))
+        known = {row.external_id for row in roster}
+        if (
+            len(current_starters) == len(lineup_slots)
+            and all(pid == EMPTY or pid in known for pid in current_starters)
+            and current_reserve <= known
+        ):
+            await self._apply_placement(team_id, week, roster, lineup_slots, current_starters, current_reserve)
+            await self.session.commit()
+        log.info("sleeper.lineup_changed_elsewhere", league_id=league.external_league_id, week=week)
+        raise ConflictError(
+            "Your lineup changed in Sleeper since this screen loaded. "
+            "Nothing was sent. Check the current lineup and make the move again."
+        )
 
     async def _push_starters(
         self,

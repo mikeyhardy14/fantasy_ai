@@ -5,6 +5,7 @@ import { api } from "./api";
 
 const LIVE_MS = 15_000;
 
+/** Omit `week` (or pass undefined) for the live/current week so shell + pages share one cache entry. */
 export const keys = {
   league: (id: string) => ["league", id] as const,
   team: (id: string, week?: number) => ["league", id, "team", week ?? "current"] as const,

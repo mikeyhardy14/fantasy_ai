@@ -143,12 +143,18 @@ async def test_opening_a_league_reads_sleeper_live(client, auth_headers, sleeper
 
     from httpx import Response
 
+    from app.services.live_league import drain_background
+
     league = await import_league(client, auth_headers)
     rosters = deepcopy(fx.ROSTERS)
     rosters[0]["settings"]["wins"] = 9
     rosters[0]["starters"] = ["2003", *rosters[0]["starters"][1:]]
     sleeper_mock.get(f"/league/{fx.LEAGUE_ID}/rosters").mock(return_value=Response(200, json=rosters))
 
+    # First hit serves the saved league and kicks a background Sleeper refresh.
+    resp = await client.get(f"/api/leagues/{league['id']}/team", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    await drain_background()
     resp = await client.get(f"/api/leagues/{league['id']}/team", headers=auth_headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()

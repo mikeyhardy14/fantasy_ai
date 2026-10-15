@@ -25,8 +25,8 @@ export default function OtherTeamPage() {
 
 function OtherTeamView({ leagueId, teamId, currentWeek }: { leagueId: string; teamId: string; currentWeek: number }) {
   const [week, setWeek] = useState(currentWeek);
-  const team = useOtherTeam(leagueId, teamId, week);
-  const mine = useTeam(leagueId, week);
+  const team = useOtherTeam(leagueId, teamId, week === currentWeek ? undefined : week);
+  const mine = useTeam(leagueId, week === currentWeek ? undefined : week);
   const view = team.data;
 
   return (

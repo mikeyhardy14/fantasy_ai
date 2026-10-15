@@ -32,7 +32,8 @@ function TeamView({ leagueId, currentWeek, provider }: { leagueId: string; curre
   const [editing, setEditing] = useState(false);
   const [notice, setNotice] = useState<{ text: string; tone: "ok" | "warn" } | null>(null);
   const toast = useToast();
-  const team = useTeam(leagueId, week);
+  // Share the "current" cache key with the sidebar when viewing this week.
+  const team = useTeam(leagueId, week === currentWeek ? undefined : week);
   const needs = useNeeds(leagueId);
   const detail = useLeagueDetail(leagueId);
   const writesEnabled = !!detail.data?.account.writes_enabled;
@@ -52,8 +53,8 @@ function TeamView({ leagueId, currentWeek, provider }: { leagueId: string; curre
         slot_index: move.slotIndex,
       }),
     onSuccess: async (result) => {
-      queryClient.setQueryData(keys.team(leagueId, week), result.team);
-      queryClient.setQueryData(keys.team(leagueId), result.team);
+      const teamKey = week === currentWeek ? keys.team(leagueId) : keys.team(leagueId, week);
+      queryClient.setQueryData(teamKey, result.team);
       setNotice(null);
       toast(result.message);
       await queryClient.invalidateQueries({ queryKey: ["league", leagueId] });

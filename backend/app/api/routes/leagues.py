@@ -1,3 +1,4 @@
+import asyncio
 from uuid import UUID
 
 from fastapi import APIRouter, Query
@@ -7,10 +8,12 @@ from app.api.deps import (
     CipherDep,
     ContextService,
     CurrentUser,
+    FreshOwnedLeague,
     OwnedLeague,
     Providers,
     SessionDep,
     SettingsDep,
+    StateDep,
     ToolCtx,
 )
 from app.core.errors import ProviderNotImplemented, ValidationFailed
@@ -61,14 +64,18 @@ POSITIONS = {"QB", "RB", "WR", "TE", "FLEX", "K", "DEF", "DL", "LB", "DB"}
 
 @router.get("", response_model=list[LeagueOut])
 async def list_leagues(
-    user: CurrentUser, session: SessionDep, ctx: ContextService, providers: Providers
+    user: CurrentUser,
+    session: SessionDep,
+    ctx: ContextService,
+    providers: Providers,
+    state: StateDep,
 ) -> list[LeagueOut]:
     from app.repositories import LeagueRepository
     from app.services.live_league import ensure_live
 
     leagues = await LeagueRepository(session).list_for_user(user.id)
-    for league in leagues:
-        await ensure_live(league, session, providers)
+    # Kick (or await first-time) refreshes together so N leagues do not serialize on Sleeper.
+    await asyncio.gather(*(ensure_live(lg, session, providers, db=state.db) for lg in leagues))
     return [await ctx.league_out(lg) for lg in leagues]
 
 
@@ -104,7 +111,7 @@ async def get_league_team(
 @router.post("/{league_id}/lineup", response_model=LineupUpdateResponse)
 async def update_lineup(
     body: LineupUpdateRequest,
-    league: OwnedLeague,
+    league: FreshOwnedLeague,
     session: SessionDep,
     providers: Providers,
     ctx: ContextService,
@@ -118,7 +125,7 @@ async def update_lineup(
 @router.post("/{league_id}/roster/add", response_model=LineupUpdateResponse)
 async def add_player(
     body: AddPlayerRequest,
-    league: OwnedLeague,
+    league: FreshOwnedLeague,
     session: SessionDep,
     providers: Providers,
     ctx: ContextService,
@@ -132,7 +139,7 @@ async def add_player(
 @router.post("/{league_id}/lineup/move", response_model=LineupUpdateResponse)
 async def move_player(
     body: RosterMoveRequest,
-    league: OwnedLeague,
+    league: FreshOwnedLeague,
     session: SessionDep,
     providers: Providers,
     ctx: ContextService,
@@ -352,7 +359,7 @@ async def get_trades(league: OwnedLeague, ctx: ContextService) -> list[Transacti
 @router.post("/{league_id}/trades", response_model=ProposeTradeResponse)
 async def propose_trade(
     body: ProposeTradeRequest,
-    league: OwnedLeague,
+    league: FreshOwnedLeague,
     session: SessionDep,
     providers: Providers,
     ctx: ContextService,
@@ -365,7 +372,7 @@ async def propose_trade(
 
 @router.post("/{league_id}/trades/{transaction_id}/respond", response_model=RespondTradeResponse)
 async def respond_to_trade(
-    league: OwnedLeague,
+    league: FreshOwnedLeague,
     transaction_id: str,
     body: RespondTradeRequest,
     session: SessionDep,

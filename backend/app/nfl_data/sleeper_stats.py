@@ -181,46 +181,79 @@ def recent_game(
 
 
 class SleeperWeeklyStats:
-    def __init__(self, cache_dir: Path, base_url: str, ttl_seconds: int = 3600):
+    def __init__(
+        self,
+        cache_dir: Path,
+        base_url: str,
+        ttl_seconds: int = 3600,
+        past_ttl_seconds: int = 24 * 3600,
+    ):
         self.cache_dir = cache_dir
         self.base_url = base_url.rstrip("/")
         self.ttl_seconds = ttl_seconds
+        self.past_ttl_seconds = past_ttl_seconds
         self._memory: dict[tuple[int, int], tuple[float, dict]] = {}
-        self._lock = asyncio.Lock()
+        self._locks: dict[tuple[int, int], asyncio.Lock] = {}
 
-    def _path(self, season: int) -> Path:
+    def _path(self, season: int, week: int) -> Path:
+        return self.cache_dir / f"sleeper_stats_{season}_w{week}.json"
+
+    def _legacy_path(self, season: int) -> Path:
         return self.cache_dir / f"sleeper_stats_{season}.json"
 
-    def _read_disk(self, season: int) -> dict:
-        path = self._path(season)
-        if not path.exists():
-            return {}
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-            return raw if isinstance(raw, dict) else {}
-        except (OSError, json.JSONDecodeError):
-            return {}
+    def _lock_for(self, key: tuple[int, int]) -> asyncio.Lock:
+        lock = self._locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[key] = lock
+        return lock
 
-    def _write_disk(self, season: int, weeks: dict) -> None:
-        path = self._path(season)
+    def _ttl(self, *, max_age: float | None, past: bool) -> float:
+        if max_age is not None:
+            return max_age
+        return self.past_ttl_seconds if past else self.ttl_seconds
+
+    def _read_week_disk(self, season: int, week: int) -> dict | None:
+        path = self._path(season, week)
+        if path.exists():
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                return raw if isinstance(raw, dict) else None
+            except (OSError, json.JSONDecodeError):
+                return None
+        # One-time fallthrough for the old single-file season cache.
+        legacy = self._legacy_path(season)
+        if not legacy.exists():
+            return None
+        try:
+            stored = json.loads(legacy.read_text(encoding="utf-8"))
+            blob = (stored.get("weeks") or {}).get(str(week))
+            return blob if isinstance(blob, dict) else None
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    def _write_week_disk(self, season: int, week: int, fetched: float, stats: dict) -> None:
+        path = self._path(season, week)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"weeks": weeks}), encoding="utf-8")
+        tmp.write_text(json.dumps({"fetched_at": fetched, "stats": stats}), encoding="utf-8")
         tmp.replace(path)
 
-    async def week(self, season: int, week: int, *, max_age: float | None = None) -> dict:
+    async def week(
+        self, season: int, week: int, *, max_age: float | None = None, past: bool = False
+    ) -> dict:
         key = (season, week)
-        limit = self.ttl_seconds if max_age is None else max_age
+        limit = self._ttl(max_age=max_age, past=past)
         now = time.time()
         cached = self._memory.get(key)
         if cached and now - cached[0] < limit:
             return cached[1]
-        disk = self._read_disk(season).get("weeks", {}).get(str(week))
+        disk = self._read_week_disk(season, week)
         if isinstance(disk, dict) and now - float(disk.get("fetched_at") or 0) < limit:
             stats = disk.get("stats") if isinstance(disk.get("stats"), dict) else {}
             self._memory[key] = (float(disk["fetched_at"]), stats)
             return stats
-        async with self._lock:
+        async with self._lock_for(key):
             cached = self._memory.get(key)
             if cached and time.time() - cached[0] < limit:
                 return cached[1]
@@ -228,10 +261,7 @@ class SleeperWeeklyStats:
             fetched = time.time()
             self._memory[key] = (fetched, stats)
             try:
-                stored = self._read_disk(season)
-                weeks = stored.get("weeks") if isinstance(stored.get("weeks"), dict) else {}
-                weeks[str(week)] = {"fetched_at": fetched, "stats": stats}
-                self._write_disk(season, weeks)
+                self._write_week_disk(season, week, fetched, stats)
             except OSError as exc:
                 log.warning("sleeper.stats_cache_failed", error=str(exc))
             return stats
@@ -261,7 +291,9 @@ class SleeperWeeklyStats:
         limit: int = 5,
     ) -> list[RecentGame]:
         weeks = list(range(max(through_week, 1), 0, -1))
-        blobs = await asyncio.gather(*(self.week(season, week) for week in weeks))
+        blobs = await asyncio.gather(
+            *(self.week(season, week, past=week < through_week) for week in weeks)
+        )
         games: list[RecentGame] = []
         for week, blob in zip(weeks, blobs, strict=True):
             raw = blob.get(sleeper_id)

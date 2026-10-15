@@ -1,3 +1,5 @@
+import asyncio
+
 from app.domain.enums import Provider
 from app.domain.provider_models import (
     ImportedLeagueSnapshot,
@@ -81,29 +83,32 @@ class SleeperProvider(FantasyProvider):
     async def fetch_league_snapshot(
         self, league_id: str, *, weeks_back: int = 3, weeks_forward: int = 1
     ) -> ImportedLeagueSnapshot:
-        """Sleeper-optimised: fetch the raw league once and reuse it."""
+        """Sleeper-optimised: fetch the raw league once, then pull weeks in parallel."""
         raw_league = await self.client.get_league(league_id)
         fallback_week = None
         if not (raw_league.get("settings") or {}).get("leg"):
             fallback_week = (await self.get_state()).week
         league = mappers.map_league_details(raw_league, fallback_week=fallback_week)
 
-        raw_rosters = await self.client.get_rosters(league_id)
-        raw_users = await self.client.get_league_users(league_id)
-        teams = mappers.map_teams(raw_rosters, raw_users, (raw_league.get("settings") or {}).get("waiver_budget"))
-        rosters = [mappers.map_roster(r, league.roster_positions) for r in raw_rosters]
-        players = await self.get_players()
-
         start = max(1, league.current_week - weeks_back)
         end = min(18, league.current_week + weeks_forward)
+        matchup_weeks = list(range(start, end + 1))
         tx_weeks = [w for w in range(league.current_week - weeks_back, league.current_week + 1) if w >= 1]
+
+        raw_rosters, raw_users, players, matchup_raws, tx_lists = await asyncio.gather(
+            self.client.get_rosters(league_id),
+            self.client.get_league_users(league_id),
+            self.get_players(),
+            asyncio.gather(*(self.client.get_matchups(league_id, week) for week in matchup_weeks)),
+            asyncio.gather(*(self.get_transactions(league_id, week) for week in tx_weeks)),
+        )
+
+        teams = mappers.map_teams(raw_rosters, raw_users, (raw_league.get("settings") or {}).get("waiver_budget"))
+        rosters = [mappers.map_roster(r, league.roster_positions) for r in raw_rosters]
         matchups: list[MatchupData] = []
-        transactions: list[TransactionData] = []
-        for week in range(start, end + 1):
-            raw = await self.client.get_matchups(league_id, week)
+        for week, raw in zip(matchup_weeks, matchup_raws, strict=True):
             matchups.extend(mappers.map_matchup(m, week, league.roster_positions) for m in raw)
-        for week in tx_weeks:
-            transactions.extend(await self.get_transactions(league_id, week))
+        transactions: list[TransactionData] = [tx for batch in tx_lists for tx in batch]
 
         return ImportedLeagueSnapshot(
             provider=self.provider,

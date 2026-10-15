@@ -40,10 +40,13 @@ class SleeperClient:
         self.player_cache_ttl_seconds = player_cache_ttl_seconds
         self._transport = transport
         self._players_memo: tuple[float, dict[str, Any]] | None = None
+        self._http: httpx.AsyncClient | None = None
+        self._http_lock = asyncio.Lock()
+        self._players_lock = asyncio.Lock()
 
     # ---- low level ------------------------------------------------------------
 
-    def _client(self) -> httpx.AsyncClient:
+    def _build_client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
             base_url=self.base_url,
             timeout=self.timeout,
@@ -51,47 +54,62 @@ class SleeperClient:
             headers={"User-Agent": "fantasy-ai/0.1 (+https://github.com)"},
         )
 
+    async def _shared_client(self) -> httpx.AsyncClient:
+        """One connection pool for the process lifetime (parallel league pulls share it)."""
+        if self._http is not None and not self._http.is_closed:
+            return self._http
+        async with self._http_lock:
+            if self._http is None or self._http.is_closed:
+                self._http = self._build_client()
+            return self._http
+
+    async def aclose(self) -> None:
+        async with self._http_lock:
+            if self._http is not None and not self._http.is_closed:
+                await self._http.aclose()
+            self._http = None
+
     async def _get(self, path: str, *, allow_null: bool = False) -> Any:
         last_exc: Exception | None = None
-        async with self._client() as client:
-            for attempt in range(self.max_retries + 1):
-                try:
-                    resp = await client.get(path)
-                except (httpx.TimeoutException, httpx.TransportError) as exc:
-                    last_exc = exc
-                    log.warning("sleeper.transport_error", path=path, attempt=attempt, error=str(exc))
+        client = await self._shared_client()
+        for attempt in range(self.max_retries + 1):
+            try:
+                resp = await client.get(path)
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                last_exc = exc
+                log.warning("sleeper.transport_error", path=path, attempt=attempt, error=str(exc))
+            else:
+                if resp.status_code == 404:
+                    raise ProviderNotFound(
+                        "Sleeper could not find that resource.", provider=self.PROVIDER
+                    )
+                if resp.status_code in RETRYABLE_STATUS:
+                    last_exc = httpx.HTTPStatusError(
+                        f"status {resp.status_code}", request=resp.request, response=resp
+                    )
+                    if resp.status_code == 429 and attempt == self.max_retries:
+                        raise ProviderRateLimited(provider=self.PROVIDER)
+                    log.warning("sleeper.retryable_status", path=path, status=resp.status_code)
+                elif resp.status_code >= 400:
+                    raise ProviderUnavailable(
+                        f"Sleeper returned HTTP {resp.status_code}.", provider=self.PROVIDER
+                    )
                 else:
-                    if resp.status_code == 404:
+                    try:
+                        body = resp.content.strip()
+                        data = None if body in (b"", b"null") else json.loads(body)
+                    except json.JSONDecodeError as exc:
+                        raise ProviderUnavailable(
+                            "Sleeper returned an unreadable response.", provider=self.PROVIDER
+                        ) from exc
+                    if data is None and not allow_null:
+                        # Sleeper returns `null` with 200 for unknown users/leagues.
                         raise ProviderNotFound(
                             "Sleeper could not find that resource.", provider=self.PROVIDER
                         )
-                    if resp.status_code in RETRYABLE_STATUS:
-                        last_exc = httpx.HTTPStatusError(
-                            f"status {resp.status_code}", request=resp.request, response=resp
-                        )
-                        if resp.status_code == 429 and attempt == self.max_retries:
-                            raise ProviderRateLimited(provider=self.PROVIDER)
-                        log.warning("sleeper.retryable_status", path=path, status=resp.status_code)
-                    elif resp.status_code >= 400:
-                        raise ProviderUnavailable(
-                            f"Sleeper returned HTTP {resp.status_code}.", provider=self.PROVIDER
-                        )
-                    else:
-                        try:
-                            body = resp.content.strip()
-                            data = None if body in (b"", b"null") else json.loads(body)
-                        except json.JSONDecodeError as exc:
-                            raise ProviderUnavailable(
-                                "Sleeper returned an unreadable response.", provider=self.PROVIDER
-                            ) from exc
-                        if data is None and not allow_null:
-                            # Sleeper returns `null` with 200 for unknown users/leagues.
-                            raise ProviderNotFound(
-                                "Sleeper could not find that resource.", provider=self.PROVIDER
-                            )
-                        return data
-                if attempt < self.max_retries:
-                    await asyncio.sleep(0.4 * (2**attempt))
+                    return data
+            if attempt < self.max_retries:
+                await asyncio.sleep(0.4 * (2**attempt))
         if isinstance(last_exc, httpx.HTTPStatusError) and last_exc.response.status_code == 429:
             raise ProviderRateLimited(provider=self.PROVIDER)
         raise ProviderUnavailable(
@@ -130,18 +148,23 @@ class SleeperClient:
         if self._players_memo and now - self._players_memo[0] < self.player_cache_ttl_seconds:
             return self._players_memo[1]
 
-        cached = self._read_disk_cache(now)
-        if cached is not None:
-            self._players_memo = (now, cached)
-            return cached
+        # Parallel league refreshes share one download instead of each pulling ~5MB.
+        async with self._players_lock:
+            if self._players_memo and time.time() - self._players_memo[0] < self.player_cache_ttl_seconds:
+                return self._players_memo[1]
 
-        log.info("sleeper.fetch_players")
-        data = await self._get("/players/nfl")
-        if not isinstance(data, dict):
-            raise ProviderUnavailable("Sleeper players payload was malformed.", provider=self.PROVIDER)
-        self._players_memo = (now, data)
-        self._write_disk_cache(data)
-        return data
+            cached = self._read_disk_cache(now)
+            if cached is not None:
+                self._players_memo = (now, cached)
+                return cached
+
+            log.info("sleeper.fetch_players")
+            data = await self._get("/players/nfl")
+            if not isinstance(data, dict):
+                raise ProviderUnavailable("Sleeper players payload was malformed.", provider=self.PROVIDER)
+            self._players_memo = (now, data)
+            self._write_disk_cache(data)
+            return data
 
     # ---- cache helpers -------------------------------------------------------
 

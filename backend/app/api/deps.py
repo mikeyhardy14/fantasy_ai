@@ -110,19 +110,41 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 async def get_owned_league(
-    league_id: UUID, session: SessionDep, user: CurrentUser, providers: Providers
+    league_id: UUID,
+    session: SessionDep,
+    user: CurrentUser,
+    providers: Providers,
+    state: StateDep,
 ) -> League:
     """Authorization boundary for every /leagues/{league_id} route."""
+    return await _owned_league(league_id, session, user, providers, state, wait=False)
+
+
+async def get_fresh_owned_league(
+    league_id: UUID,
+    session: SessionDep,
+    user: CurrentUser,
+    providers: Providers,
+    state: StateDep,
+) -> League:
+    """Same boundary for writes, which wait for Sleeper instead of reading the saved copy."""
+    return await _owned_league(league_id, session, user, providers, state, wait=True)
+
+
+async def _owned_league(
+    league_id: UUID, session: AsyncSession, user: User, providers, state: AppState, *, wait: bool
+) -> League:
     league = await LeagueRepository(session).get_owned(user.id, league_id)
     if league is None:
         raise NotFoundError("League not found.")
     from app.services.live_league import ensure_live
 
-    await ensure_live(league, session, providers)
+    await ensure_live(league, session, providers, db=state.db, wait=wait)
     return league
 
 
 OwnedLeague = Annotated[League, Depends(get_owned_league)]
+FreshOwnedLeague = Annotated[League, Depends(get_fresh_owned_league)]
 
 
 def get_providers(state: StateDep) -> ProviderRegistry:
