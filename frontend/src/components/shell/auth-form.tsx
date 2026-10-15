@@ -36,7 +36,9 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[minmax(0,32rem)_1fr]">
       <div className="px-6 py-12 sm:px-12 sm:py-16">
-        <Brand />
+        <Link href="/" className="inline-flex focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-surface">
+          <Brand />
+        </Link>
         <h1 className="mt-12 text-4xl text-slate-100">{mode === "login" ? "Sign in" : "Create an account"}</h1>
         <p className="mt-3 max-w-sm text-sm leading-relaxed text-slate-400">
           {mode === "login"
