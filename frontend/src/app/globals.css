@@ -115,6 +115,74 @@ select optgroup {
   }
 }
 
+.landing-nav {
+  animation: veil-enter 420ms ease both;
+}
+
+.landing-hero-copy {
+  animation: page-enter 640ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.landing-field {
+  background:
+    linear-gradient(180deg, rgba(12, 18, 16, 0.15) 0%, rgba(12, 18, 16, 0.72) 55%, #0c1210 100%),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent 72px,
+      rgba(58, 170, 92, 0.07) 72px,
+      rgba(58, 170, 92, 0.07) 73px
+    ),
+    radial-gradient(ellipse 80% 55% at 70% 40%, rgba(58, 170, 92, 0.22), transparent 62%),
+    radial-gradient(ellipse 50% 40% at 12% 70%, rgba(212, 162, 74, 0.12), transparent 55%);
+  animation: landing-field-drift 18s ease-in-out infinite alternate;
+}
+
+.landing-desk {
+  animation: landing-desk-rise 780ms cubic-bezier(0.16, 1, 0.3, 1) 120ms both;
+}
+
+.landing-bar {
+  transform-origin: left center;
+  animation: landing-bar-grow 900ms cubic-bezier(0.22, 1, 0.36, 1) 520ms both;
+}
+
+.landing-bar-delay {
+  transform-origin: left center;
+  animation: landing-bar-grow 900ms cubic-bezier(0.22, 1, 0.36, 1) 720ms both;
+}
+
+@keyframes landing-field-drift {
+  from {
+    background-position: 0 0, 0 0, 0 0, 0 0;
+  }
+  to {
+    background-position: 0 0, 28px 0, 0 0, 0 0;
+  }
+}
+
+@keyframes landing-desk-rise {
+  from {
+    opacity: 0;
+    transform: translateY(28px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes landing-bar-grow {
+  from {
+    transform: scaleX(0.15);
+    opacity: 0.4;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

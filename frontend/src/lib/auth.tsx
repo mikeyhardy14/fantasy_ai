@@ -52,14 +52,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     tokenStore.clear();
     setUser(null);
     queryClient.clear();
-    router.push("/login");
+    router.push("/");
   }, [queryClient, router]);
 
   useEffect(() => {
     const handler = () => {
       setUser(null);
       queryClient.clear();
-      router.push("/login");
+      router.push("/");
     };
     window.addEventListener("fantasy-ai:unauthorized", handler);
     return () => window.removeEventListener("fantasy-ai:unauthorized", handler);
