@@ -79,7 +79,12 @@ class SleeperProvider(FantasyProvider):
         return [p for pid, p in players.items() if pid not in rostered and p.is_fantasy_relevant]
 
     async def fetch_league_snapshot(
-        self, league_id: str, *, weeks_back: int = 3, weeks_forward: int = 1
+        self,
+        league_id: str,
+        *,
+        weeks_back: int = 3,
+        weeks_forward: int = 1,
+        include_players: bool = True,
     ) -> ImportedLeagueSnapshot:
         """Sleeper-optimised: fetch the raw league once and reuse it."""
         raw_league = await self.client.get_league(league_id)
@@ -92,7 +97,7 @@ class SleeperProvider(FantasyProvider):
         raw_users = await self.client.get_league_users(league_id)
         teams = mappers.map_teams(raw_rosters, raw_users, (raw_league.get("settings") or {}).get("waiver_budget"))
         rosters = [mappers.map_roster(r, league.roster_positions) for r in raw_rosters]
-        players = await self.get_players()
+        players = await self.get_players() if include_players else {}
 
         start = max(1, league.current_week - weeks_back)
         end = min(18, league.current_week + weeks_forward)

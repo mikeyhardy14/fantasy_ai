@@ -60,8 +60,29 @@ class SyncService:
         return league
 
     async def refresh_live(self, league: League, provider: FantasyProvider) -> None:
-        """Pull the current league from the provider. Players already stored stay; rostered ones update."""
-        snapshot = await provider.fetch_league_snapshot(league.external_league_id)
+        """Light session refresh: current week only; reuse players already in the DB."""
+        snapshot = await provider.fetch_league_snapshot(
+            league.external_league_id,
+            weeks_back=0,
+            weeks_forward=0,
+            include_players=False,
+        )
+        referenced: set[str] = set()
+        for roster in snapshot.rosters:
+            referenced.update(e.external_player_id for e in roster.entries)
+        for m in snapshot.matchups:
+            referenced.update(m.player_points.keys())
+            referenced.update(e.external_player_id for e in m.roster_entries)
+        for t in snapshot.transactions:
+            referenced.update(a["external_player_id"] for a in t.adds)
+            referenced.update(d["external_player_id"] for d in t.drops)
+
+        known = await self.players.map_external_ids(snapshot.provider.value, referenced)
+        missing = referenced - set(known)
+        if missing:
+            catalogue = await provider.get_players()
+            snapshot.players = {pid: catalogue[pid] for pid in missing if pid in catalogue}
+
         await self.apply_snapshot(league, snapshot, referenced_only=True)
         now = datetime.now(UTC)
         league.last_synced_at = now
@@ -105,10 +126,13 @@ class SyncService:
         for ext_id, pdata in snapshot.players.items():
             if ext_id in referenced or (not referenced_only and pdata.is_fantasy_relevant):
                 to_persist[ext_id] = pdata
-        for ext_id in referenced - set(to_persist):
-            # Referenced but missing from the catalogue: keep a placeholder so FK holds.
+        # Prefer players already in the session DB over Unknown placeholders.
+        already = await self.players.map_external_ids(provider, referenced - set(to_persist))
+        for ext_id in referenced - set(to_persist) - set(already):
+            # Referenced but missing from the catalogue and DB: keep a placeholder so FK holds.
             to_persist[ext_id] = PlayerData(external_player_id=ext_id, name=f"Unknown player {ext_id}")
         players_by_ext: dict[str, Player] = await self.players.upsert_many(provider, to_persist.values())
+        players_by_ext.update(already)
 
         # -- rosters (replace per team/week) --------------------------------------
         week = league.current_week

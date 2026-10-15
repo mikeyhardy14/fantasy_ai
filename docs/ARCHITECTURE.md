@@ -260,6 +260,12 @@ Phase 7 — Provider stubs with capabilities and encrypted credential storage.
 * **Sleeper player catalogue caching.** `/players/nfl` is ~5 MB. It is cached
   on disk for 24h and only fantasy-relevant active players plus every rostered
   player are persisted to the DB.
+* **Session database.** Imported league rows are the load path. Page reads
+  serve from Postgres/SQLite while `last_synced_at` is within
+  `SLEEPER_LIVE_TTL_SECONDS` (default 180). Stale opens do a light live
+  refresh (current week only, players already in DB reused). League list never
+  re-pulls Sleeper. The browser mirrors key query results in `sessionStorage`
+  (`omaha_session_db_v1`) so navigations hydrate instantly.
 * **Roster slots.** Sleeper gives `starters` as an ordered list aligned with
   `roster_positions`. Slot names are derived from that alignment; bench
   players are `BN`, `reserve` -> `IR`, `taxi` -> `TAXI`.

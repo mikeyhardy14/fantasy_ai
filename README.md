@@ -156,6 +156,7 @@ See [`.env.example`](.env.example). The important ones:
 | `FRONTEND_URL` | Allowed CORS origin. |
 | `DEMO_ENABLED` | Allow `POST /api/demo/league`. |
 | `SLEEPER_PLAYER_CACHE_TTL_HOURS` | On-disk cache TTL for Sleeper's ~5 MB player catalogue. |
+| `SLEEPER_LIVE_TTL_SECONDS` | Serve league pages from the session DB this long before a light Sleeper refresh (default 180). |
 | `NEXT_PUBLIC_API_URL` | Frontend → backend base URL (the only frontend variable). |
 
 No API keys are ever sent to the browser; the frontend only knows the API URL.
@@ -288,6 +289,13 @@ Sync (`POST /api/leagues/{id}/sync`) is idempotent: leagues/teams/players/
 matchups/transactions are upserted by natural keys; roster entries for a
 (team, week) are replaced. `last_synced_at`, `sync_status`, `sync_error` are
 tracked on the league.
+
+Those synced rows are the **session database**. Opening a league serves them
+while `last_synced_at` is within `SLEEPER_LIVE_TTL_SECONDS`. When the session
+ages out, a light refresh pulls only the current week and reuses players
+already stored — it does not re-download the full Sleeper catalogue. The
+league list endpoint never calls Sleeper. The UI also keeps league query
+results in the browser session store so a reload paints from cache first.
 
 Only fantasy-relevant active players plus any player referenced by a roster,
 matchup or transaction are persisted (a few thousand rows, not the whole

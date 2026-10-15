@@ -68,18 +68,24 @@ class FantasyProvider(ABC):
         ...
 
     async def fetch_league_snapshot(
-        self, league_id: str, *, weeks_back: int = 3, weeks_forward: int = 1
+        self,
+        league_id: str,
+        *,
+        weeks_back: int = 3,
+        weeks_forward: int = 1,
+        include_players: bool = True,
     ) -> ImportedLeagueSnapshot:
         """Default implementation composed from the primitives above.
 
         Providers may override for efficiency. A full import can ask for the
         whole regular season; live refresh stays on nearby weeks. Transactions
-        cover the current week and a few prior weeks.
+        cover the current week and a few prior weeks. ``include_players=False``
+        skips the catalogue when the session DB already has the rostered players.
         """
         league = await self.get_league(league_id)
         teams = await self.get_teams(league_id)
         rosters = await self.get_rosters(league_id)
-        players = await self.get_players()
+        players = await self.get_players() if include_players else {}
 
         start = max(1, league.current_week - weeks_back)
         end = min(18, league.current_week + weeks_forward)
