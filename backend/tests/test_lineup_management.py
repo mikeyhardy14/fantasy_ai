@@ -128,3 +128,42 @@ async def test_enabled_management_plans_a_sub_for_an_out_starter(client, auth_he
     assert summaries
     assert any("Flash Backup" in summary and "Dash Ground" in summary for summary in summaries)
     assert seen == summaries
+
+
+def test_management_leaves_players_whose_game_has_started():
+    """Sleeper locks a player at kickoff, so AI Management neither benches nor starts one."""
+    out_and_locked = _player("Dash Ground", "RB", "Out")
+    out = _player("Knee Guy", "WR", "Out")
+    locked_backup = _player("Flash Backup", "RB")
+    receiver = _player("Bench Receiver", "WR")
+    team = _team(
+        [
+            _slot(out_and_locked, "RB", 0, True, ["OUT", "LOCKED"]),
+            _slot(out, "WR", 1, True, ["OUT"]),
+        ],
+        [
+            _slot(locked_backup, "BN", None, False, ["LOCKED"]),
+            _slot(receiver, "BN", None, False, []),
+        ],
+        [],
+    )
+    moves = plan_management(team)
+    assert [(move.player_name, move.slot_index) for move in moves] == [("Bench Receiver", 1)]
+
+
+def test_swaps_skip_players_whose_game_has_started():
+    from app.intelligence.lineup import suggest_swaps
+
+    out = _player("Dash Ground", "RB", "Out")
+    locked_backup = _player("Flash Backup", "RB")
+    other_backup = _player("Late Runner", "RB")
+    swaps = suggest_swaps(
+        [_slot(out, "RB", 0, True, ["OUT"])],
+        [
+            _slot(locked_backup, "BN", None, False, ["LOCKED"]),
+            _slot(other_backup, "BN", None, False, []),
+        ],
+    )
+    assert [swap.replacement.player.name for swap in swaps] == ["Late Runner"]
+
+    assert suggest_swaps([_slot(out, "RB", 0, True, ["OUT", "LOCKED"])], [_slot(other_backup, "BN", None, False, [])]) == []

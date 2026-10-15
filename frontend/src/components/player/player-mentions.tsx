@@ -38,7 +38,7 @@ export function usePlayerDirectory() {
 
 export function PlayerDirectory({ children }: { children: ReactNode }) {
   const { selected } = useLeague();
-  const rosters = useLeagueRosters(selected?.id);
+  const rosters = useLeagueRosters(selected?.id, undefined, { poll: false });
   const players = useMemo(() => playersOnRosters(rosters.data ?? []), [rosters.data]);
   return <MentionDirectory players={players}>{children}</MentionDirectory>;
 }

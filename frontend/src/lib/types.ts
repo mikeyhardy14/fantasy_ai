@@ -199,7 +199,8 @@ export type Flag =
   | "QUESTIONABLE"
   | "INJURED"
   | "INACTIVE"
-  | "FREE_AGENT_NFL";
+  | "FREE_AGENT_NFL"
+  | "LOCKED";
 
 export interface RosterSlot {
   slot: string;

@@ -8,6 +8,7 @@ import { rosterPlayers, WaiverAddDialog } from "@/components/roster/waiver-add";
 import { PositionBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import { useShowBettingLines } from "@/lib/betting-lines";
 import { useLeague } from "@/lib/league";
 import { useLeagueDetail, useNeeds, useTeam } from "@/lib/queries";
 import type { PlayerSheet, RecentGame, SuggestedTrade } from "@/lib/types";
@@ -221,6 +222,7 @@ export function PlayerSheetDialog({
   onSend?: () => void;
 }) {
   const player = sheet?.player;
+  const betting = useShowBettingLines();
   const pointsLabel = sheet?.recent_games[0]?.points_label;
   const matchup = player ? opponentLabel(player, week) : null;
   return (
@@ -345,7 +347,7 @@ export function PlayerSheetDialog({
 
             <section>
               <h3 className="text-[11px] uppercase tracking-wide text-slate-500">Why this projection</h3>
-              {player.projection_lines.length ? (
+              {betting && player.projection_lines.length ? (
                 <div className="mt-2 overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>

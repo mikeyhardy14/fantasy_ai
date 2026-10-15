@@ -78,6 +78,15 @@ def player_flags(player: PlayerOut, week: int) -> list[str]:
     return flags
 
 
+def game_started(game) -> bool:
+    """Sleeper locks a player at kickoff; a game in progress or final can't be changed."""
+    return getattr(game, "state", None) in {"in", "post"}
+
+
+def is_locked(slot: RosterSlotOut) -> bool:
+    return "LOCKED" in slot.flags
+
+
 def is_unavailable(slot: RosterSlotOut) -> bool:
     return bool(set(slot.flags) & UNAVAILABLE_FLAGS)
 
@@ -137,6 +146,7 @@ def suggest_swaps(starters: list[RosterSlotOut], bench: list[RosterSlotOut]) -> 
             and str(b.player.id) not in used_bench
             and is_eligible(b.player, slot)
             and not is_unavailable(b)
+            and not is_locked(b)
         ]
         # Best projection first; unknown projections last but still eligible.
         cands.sort(key=lambda b: (_proj(b) is None, -(_proj(b) or 0.0), injury_severity(b.player)))  # type: ignore[arg-type]
@@ -144,7 +154,7 @@ def suggest_swaps(starters: list[RosterSlotOut], bench: list[RosterSlotOut]) -> 
 
     # 1) Unavailable starters first (highest urgency)
     for s in sorted(starters, key=lambda x: not is_unavailable(x)):
-        if s.player is None:
+        if s.player is None or is_locked(s):
             continue
         if is_unavailable(s):
             cands = bench_candidates(s.slot)
@@ -169,7 +179,7 @@ def suggest_swaps(starters: list[RosterSlotOut], bench: list[RosterSlotOut]) -> 
 
     # 2) Projection-driven upgrades for healthy starters
     for s in starters:
-        if s.player is None or is_unavailable(s) or _proj(s) is None:
+        if s.player is None or is_unavailable(s) or is_locked(s) or _proj(s) is None:
             continue
         cands = [b for b in bench_candidates(s.slot) if _proj(b) is not None and is_healthy(b)]
         if not cands:

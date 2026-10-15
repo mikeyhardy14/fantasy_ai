@@ -16,7 +16,7 @@ from app.core.errors import NotFoundError
 from app.core.logging import get_logger
 from app.domain.enums import NON_LINEUP_SLOTS
 from app.intelligence.context import TeamContext
-from app.intelligence.lineup import lineup_issues, player_flags
+from app.intelligence.lineup import game_started, lineup_issues, player_flags
 from app.intelligence.roster_needs import compute_roster_needs
 from app.models import FantasyTeam, League, Player, RosterEntry, Transaction
 from app.nfl_data import NFLDataProvider, PlayerProjection, player_key
@@ -139,9 +139,38 @@ def _matchup_status(
         return "bye"
     if week < current_week or _nfl_slate_final(nfl) or _lineup_has_played(starters):
         return "final"
-    if points == 0 and opponent_points == 0:
+    if points == 0 and opponent_points == 0 and not _slate_started(nfl):
         return "upcoming"
     return "in_progress"
+
+
+def _slate_started(nfl: list | None) -> bool:
+    """A 0-0 matchup is underway once any game that week has kicked off."""
+    return any(getattr(game, "state", None) in {"in", "post"} for game in nfl or [])
+
+
+def _live_total(raw: dict) -> float | None:
+    """Team total from a Sleeper matchup row, or None to keep the last known score.
+
+    A commissioner's correction (custom_points) wins. Sleeper's `points` can sit at
+    0 after starters have scored, so the starters' own points fill that gap; a
+    missing value never turns into a fake 0.0.
+    """
+    def number(value) -> float | None:
+        try:
+            return None if value is None else float(value)
+        except (TypeError, ValueError):
+            return None
+
+    custom = number(raw.get("custom_points"))
+    if custom is not None:
+        return custom
+    official = number(raw.get("points"))
+    starters = [value for value in (number(item) for item in raw.get("starters_points") or []) if value is not None]
+    starter_total = round(sum(starters), 2) if starters else None
+    if official is not None and (official != 0 or not starter_total):
+        return official
+    return starter_total
 
 
 class LeagueContextService:
@@ -699,6 +728,8 @@ class LeagueContextService:
             )
             if slot.game and slot.game.stat_line and not slot.stat_line:
                 slot.stat_line = slot.game.stat_line
+            if game_started(slot.game) and "LOCKED" not in slot.flags:
+                slot.flags.append("LOCKED")
 
     async def _player_game(self, league: League, week: int, player: PlayerOut) -> GameLookOut | None:
         games, blob = await self._current_board(league, week)
@@ -1034,17 +1065,17 @@ class LeagueContextService:
                     points_by_player[str(player.id)] = float(value)
                 except (TypeError, ValueError):
                     continue
-            try:
-                side.points = float(raw.get("points") or 0)
-            except (TypeError, ValueError):
-                side.points = 0.0
+            live_total = _live_total(raw)
+            if live_total is not None:
+                side.points = live_total
             for slot in side.starters:
                 if slot.player and str(slot.player.id) in points_by_player:
                     slot.points = points_by_player[str(slot.player.id)]
             row = await self.matchups.get_for_team(league.id, week, side.team.id)
             if row is not None:
                 row.points = side.points
-                row.player_points = points_by_player
+                if raw.get("players_points") is not None:
+                    row.player_points = points_by_player
         await self.session.commit()
 
     # ---- standings / transactions ----------------------------------------------

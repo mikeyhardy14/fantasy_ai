@@ -18,7 +18,7 @@ from app.core.errors import AppError
 from app.core.logging import get_logger
 from app.db.session import Database
 from app.domain.enums import Provider
-from app.intelligence.lineup import _proj, injury_severity, is_eligible, is_unavailable
+from app.intelligence.lineup import _proj, injury_severity, is_eligible, is_locked, is_unavailable
 from app.models import League, LineupManagement, User
 from app.repositories import LeagueRepository
 from app.schemas.league import (
@@ -60,6 +60,7 @@ def plan_management(team: TeamOut) -> list[LineupMove]:
             if row.player
             and str(row.player.id) not in taken
             and not is_unavailable(row)
+            and not is_locked(row)
             and is_eligible(row.player, slot_name)
         ]
         pool.sort(key=lambda row: (_proj(row) is None, -(_proj(row) or 0.0), injury_severity(row.player)))  # type: ignore[arg-type]
@@ -69,6 +70,8 @@ def plan_management(team: TeamOut) -> list[LineupMove]:
         if starter.slot_index is None:
             continue
         if starter.player is not None and not is_unavailable(starter):
+            continue
+        if is_locked(starter):
             continue
         pool = candidates(starter.slot)
         if not pool:
@@ -89,7 +92,7 @@ def plan_management(team: TeamOut) -> list[LineupMove]:
         )
 
     for row in reserve:
-        if row.player is None or str(row.player.id) in taken or is_unavailable(row):
+        if row.player is None or str(row.player.id) in taken or is_unavailable(row) or is_locked(row):
             continue
         taken.add(str(row.player.id))
         moves.append(

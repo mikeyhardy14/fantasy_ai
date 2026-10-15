@@ -23,7 +23,7 @@ from app.core.errors import (
 from app.core.logging import get_logger
 from app.core.security import CredentialCipher
 from app.domain.enums import NON_LINEUP_SLOTS, Provider
-from app.intelligence.lineup import eligible_for_ir, is_eligible
+from app.intelligence.lineup import eligible_for_ir, game_started, is_eligible
 from app.models import FantasyAccount, League, RosterEntry
 from app.providers.sleeper.graphql import SleeperGraphQL
 from app.providers.sleeper.provider import SleeperProvider
@@ -41,6 +41,7 @@ from app.schemas.league import (
     ProposeTradeResponse,
     RosterMoveRequest,
 )
+from app.services.game_look import index_games
 from app.services.league_context import LeagueContextService
 
 log = get_logger(__name__)
@@ -175,6 +176,18 @@ class SleeperWriteService:
                 raise ValidationFailed(f"{entry.player.name} has no Sleeper id, so the lineup cannot be sent.")
             sleeper_starters.append(external_id)
 
+        players = {
+            external: (entry.player.name, entry.player.nfl_team)
+            for entry in entries
+            if (external := entry.player.external_id_for(Provider.SLEEPER))
+        }
+        current = [EMPTY] * len(lineup_slots)
+        for entry in entries:
+            external = entry.player.external_id_for(Provider.SLEEPER)
+            if entry.is_starter and external and entry.slot_index is not None and 0 <= entry.slot_index < len(current):
+                current[entry.slot_index] = external
+        await self._refuse_locked(league, body.week, players, _moved(current, sleeper_starters, [], []))
+
         token = self._token_for(league.fantasy_account)
         graphql = SleeperGraphQL(self.graphql_url, token)
         roster_id = _roster_id(team.external_team_id)
@@ -303,6 +316,12 @@ class SleeperWriteService:
 
         starters_changed = desired_starters != starters
         reserve_changed = _id_set(desired_reserve) != _id_set(reserve)
+        await self._refuse_locked(
+            league,
+            body.week,
+            {row.external_id: (row.name, row.view.nfl_team) for row in roster},
+            _moved(starters, desired_starters, reserve, desired_reserve),
+        )
         if not starters_changed and not reserve_changed:
             team_out = await self.context.user_team_out(league, body.week)
             return LineupUpdateResponse(
@@ -774,6 +793,19 @@ class SleeperWriteService:
             return str(player_id) in {str(item) for item in players}
         return False
 
+    async def _refuse_locked(
+        self, league: League, week: int, players: dict[str, tuple[str, str | None]], moved: set[str]
+    ) -> None:
+        """Sleeper locks a player at kickoff. Refuse a write that moves one instead of sending it."""
+        if not moved:
+            return
+        games, _blob = await self.context._current_board(league, week)
+        by_team = index_games(games)
+        for external_id in sorted(moved):
+            name, nfl_team = players.get(external_id, (None, None))
+            if nfl_team and game_started(by_team.get(nfl_team.upper())):
+                raise ValidationFailed(f"{name}'s game has started, so Sleeper has locked them for this week.")
+
     async def _guard_unchanged(
         self,
         graphql: SleeperGraphQL,
@@ -1205,6 +1237,16 @@ def _aligned_starters(roster: list[_Seat], lineup_slots: list[str]) -> list[str]
         if row.is_starter and row.slot_index is not None and 0 <= row.slot_index < len(lineup_slots):
             starters[row.slot_index] = row.external_id
     return starters
+
+
+def _moved(starters: list[str], desired: list[str], reserve: list[str], desired_reserve: list[str]) -> set[str]:
+    """Players whose starting slot or IR status changes."""
+    moved: set[str] = set()
+    for before, after in zip(starters, desired, strict=False):
+        if before != after:
+            moved.update(pid for pid in (before, after) if pid != EMPTY)
+    moved.update(set(_id_set(reserve)) ^ set(_id_set(desired_reserve)))
+    return moved
 
 
 def _ir_capacity(league: League) -> int:

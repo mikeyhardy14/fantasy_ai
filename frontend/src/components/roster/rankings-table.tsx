@@ -2,6 +2,7 @@ import { eligibleForSlot } from "@/components/roster/lineup-board";
 import { PlayerFace, PlayerGameLine, PlayStatus, playPhase, playRowClass } from "@/components/player/player-face";
 import { PlayerName } from "@/components/player/player-sheet";
 import { PositionBadge } from "@/components/ui/badge";
+import { useShowBettingLines } from "@/lib/betting-lines";
 import type { RankingRow, Rankings, RosterSlot, Team } from "@/lib/types";
 import { cn, formatPoints } from "@/lib/utils";
 import { Fragment, useState } from "react";
@@ -58,6 +59,7 @@ export function RankingsTable({
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const owned = roster ? rosterIndex(roster) : new Map<string, Owned>();
+  const betting = useShowBettingLines();
   if (!rankings.rows.length) {
     return <EmptyState title={emptyTitle} description={emptyDescription} />;
   }
@@ -69,7 +71,7 @@ export function RankingsTable({
             <th className="px-5 py-2 font-medium">#</th>
             <th className="px-2 py-2 font-medium">Player</th>
             <th className="px-2 py-2 font-medium">Opp</th>
-            <th className="px-2 py-2 text-right font-medium">Implied</th>
+            {betting ? <th className="px-2 py-2 text-right font-medium">Implied</th> : null}
             <th className="px-2 py-2 text-right font-medium">Proj</th>
             <th className="px-2 py-2 text-right font-medium" title="Points scored this season">Pts</th>
             <th className="px-5 py-2 text-right font-medium">Value</th>
@@ -86,7 +88,7 @@ export function RankingsTable({
             const choices = roster && mine && onMove ? subChoices(roster, mine) : [];
             const open = openId === row.player_id;
             const actions = Boolean(onMove || onAdd || onTrade);
-            const columns = actions ? 8 : 7;
+            const columns = (actions ? 8 : 7) - (betting ? 0 : 1);
             const phase = playPhase(row.game, row.position, row.nfl_team);
             return (
               <Fragment key={row.player_id}>
@@ -110,10 +112,12 @@ export function RankingsTable({
                 <td className="px-2 py-2.5 text-xs text-slate-400">
                   {row.opponent ? `${row.home === false ? "@" : "vs"} ${row.opponent}` : "—"}
                 </td>
-                <td className="px-2 py-2.5 text-right" title={`${books}${line ? `. ${line}` : ""}`}>
-                  <div className="tabular-nums text-slate-100">{formatPoints(row.implied_points)}</div>
-                  {line ? <div className="text-[11px] text-slate-500">{line}</div> : null}
-                </td>
+                {betting ? (
+                  <td className="px-2 py-2.5 text-right" title={`${books}${line ? `. ${line}` : ""}`}>
+                    <div className="tabular-nums text-slate-100">{formatPoints(row.implied_points)}</div>
+                    {line ? <div className="text-[11px] text-slate-500">{line}</div> : null}
+                  </td>
+                ) : null}
                 <td className="px-2 py-2.5 text-right tabular-nums text-slate-100">{formatPoints(row.projected_points)}</td>
                 <td className="px-2 py-2.5 text-right tabular-nums text-slate-200" title="Points scored this season">{formatPoints(row.season_points)}</td>
                 <td className="px-5 py-2.5 text-right tabular-nums text-slate-100">{formatValue(row.vorp)}</td>

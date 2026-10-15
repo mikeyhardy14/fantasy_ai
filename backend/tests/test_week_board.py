@@ -81,3 +81,21 @@ def test_board_week_advances_on_tuesday_when_the_slate_is_final():
     assert board_week(4, slate_final=True, now=tuesday) == 5
     assert board_week(4, slate_final=True, now=monday) == 4
     assert board_week(4, slate_final=False, now=tuesday) == 4
+
+
+def test_scoreless_matchup_is_live_once_the_week_kicks_off():
+    before = [SimpleNamespace(state="pre"), SimpleNamespace(state="pre")]
+    thursday = [SimpleNamespace(state="in"), SimpleNamespace(state="pre")]
+    assert _matchup_status(4, 4, 0.0, 0.0, before) == "upcoming"
+    assert _matchup_status(4, 4, 0.0, 0.0, thursday) == "in_progress"
+
+
+def test_live_total_never_invents_a_zero():
+    from app.services.league_context import _live_total
+
+    assert _live_total({}) is None
+    assert _live_total({"points": None}) is None
+    assert _live_total({"points": 88.4}) == 88.4
+    assert _live_total({"points": 0, "starters_points": [12.5, 6.1, 0]}) == 18.6
+    assert _live_total({"points": 0, "starters_points": [0, 0]}) == 0.0
+    assert _live_total({"points": 88.4, "custom_points": 90.0}) == 90.0
