@@ -167,6 +167,7 @@ class TradeSidePlayer(BaseModel):
     id: UUID
     name: str
     position: str | None = None
+    points_per_game: float | None = None
 
 
 class SuggestTradeResponse(BaseModel):
@@ -175,6 +176,31 @@ class SuggestTradeResponse(BaseModel):
     opponent_name: str
     message: str
     generated_by: GeneratedBy
+
+
+class FindTradesRequest(BaseModel):
+    limit: int = Field(default=8, ge=1, le=20)
+
+
+class MutualTradeIdea(BaseModel):
+    give: list[TradeSidePlayer]
+    receive: list[TradeSidePlayer]
+    opponent_team_id: UUID
+    opponent_name: str
+    user_ppg_before: float
+    user_ppg_after: float
+    partner_ppg_before: float
+    partner_ppg_after: float
+    user_delta: float
+    partner_delta: float
+    message: str
+
+
+class FindTradesResponse(BaseModel):
+    trades: list[MutualTradeIdea]
+    summary: str
+    generated_by: GeneratedBy
+    model: str | None = None
 
 
 class TradeDraft(BaseModel):

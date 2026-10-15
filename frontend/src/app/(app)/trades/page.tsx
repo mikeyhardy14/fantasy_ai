@@ -16,7 +16,7 @@ import { EmptyState, ErrorState, InlineError, SkeletonRows } from "@/components/
 import { api } from "@/lib/api";
 import { useLeague } from "@/lib/league";
 import { keys, useLeagueDetail, usePlayers, useRecommendations, useTeam, useTrades } from "@/lib/queries";
-import type { Player, TradeAnalysis, TradeReview, Transaction } from "@/lib/types";
+import type { FindTradesResponse, MutualTradeIdea, Player, TradeAnalysis, TradeReview, Transaction } from "@/lib/types";
 import { cn, formatPoints } from "@/lib/utils";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeftRight, X } from "lucide-react";
@@ -53,6 +53,7 @@ function TradesView({ leagueId }: { leagueId: string }) {
   const queryClient = useQueryClient();
   const writes = selected?.provider === "sleeper" && !!detail.data?.account.writes_enabled;
   const analyze = useMutation({ mutationFn: () => api.ai.trade(leagueId, { give: give.map((p) => p.id), receive: receive.map((p) => p.id) }) });
+  const findTrades = useMutation({ mutationFn: () => api.ai.findTrades(leagueId) });
   const propose = useMutation({
     mutationFn: () => api.leagues.proposeTrade(leagueId, { give: give.map((player) => player.id), receive: receive.map((player) => player.id) }),
     onSuccess: (result) => {
@@ -63,6 +64,20 @@ function TradesView({ leagueId }: { leagueId: string }) {
       queryClient.invalidateQueries({ queryKey: keys.trades(leagueId) });
     },
   });
+
+  const applyIdea = (idea: MutualTradeIdea) => {
+    const givePlayers = idea.give
+      .map((side) => roster.find((player) => player.id === side.id))
+      .filter((player): player is Player => !!player);
+    if (givePlayers.length !== idea.give.length) {
+      toast("Could not load those players onto the trade board.");
+      return;
+    }
+    setGive(givePlayers);
+    Promise.all(idea.receive.map((side) => api.leagues.playerSheet(leagueId, side.id)))
+      .then((sheets) => setReceive(sheets.map((sheet) => sheet.player)))
+      .catch(() => toast("Could not load the receive side of that trade."));
+  };
 
   const roster = useMemo(() => [...(team.data?.starters ?? []), ...(team.data?.bench ?? []), ...(team.data?.reserve ?? [])].map((s) => s.player!).filter(Boolean), [team.data]);
   useEffect(() => {
@@ -92,6 +107,23 @@ function TradesView({ leagueId }: { leagueId: string }) {
       <PageHeader title="Trades" description="Open offers stay here until the other manager answers them in Sleeper." />
       <OutstandingOffers leagueId={leagueId} userTeamId={team.data?.team.id} userTeamName={team.data?.team.name} />
       <MadeTrades leagueId={leagueId} />
+      <Card data-testid="find-trades">
+        <CardHeader
+          title="Mutual PPG upgrades"
+          description="Scan the league for swaps that raise starter PPG for both sides."
+          action={
+            <Button onClick={() => findTrades.mutate()} loading={findTrades.isPending}>
+              Find trades
+            </Button>
+          }
+        />
+        <CardBody className="space-y-3">
+          <InlineError error={findTrades.error} />
+          {findTrades.data ? <FindTradesResult result={findTrades.data} onUse={applyIdea} /> : (
+            <p className="text-sm text-slate-500">Uses Sleeper and ESPN season PPG to project starter value after each swap.</p>
+          )}
+        </CardBody>
+      </Card>
       <div className="grid gap-6 xl:grid-cols-3">
         <div className="space-y-6 xl:col-span-2">
           <div className="grid gap-6 md:grid-cols-2">
@@ -287,10 +319,42 @@ function PickRow({ p, active, onClick }: { p: Player; active: boolean; onClick: 
         {p.injury_status ? <Badge className="bg-amber-500/15 text-amber-200 ring-amber-500/30">{p.injury_status}</Badge> : null}
       </span>
       <span className="text-right text-xs tabular-nums text-slate-400">
-        <span className="block" title="Points scored this season">{formatPoints(p.season_points)}</span>
+        <span className="block" title="Season points per game">{formatPoints(p.points_per_game)} PPG</span>
         <span className="block text-[10px] text-slate-500">proj {formatPoints(p.projected_points)}</span>
       </span>
     </button>
+  );
+}
+
+function FindTradesResult({ result, onUse }: { result: FindTradesResponse; onUse: (idea: MutualTradeIdea) => void }) {
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-slate-200"><MentionText text={result.summary} /></p>
+      {!result.trades.length ? (
+        <EmptyState title="No mutual upgrades" description="No swap raises starter PPG for both managers right now." className="py-4" />
+      ) : (
+        <ul className="space-y-3">
+          {result.trades.map((idea) => (
+            <li key={`${idea.opponent_team_id}-${idea.give[0]?.id}-${idea.receive[0]?.id}`} className="rounded-lg border border-surface-border bg-surface px-3 py-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0 space-y-1">
+                  <p className="text-sm text-slate-100">
+                    {idea.give.map((p) => p.name).join(", ")}
+                    <span className="mx-2 text-slate-500">→</span>
+                    {idea.receive.map((p) => p.name).join(", ")}
+                  </p>
+                  <p className="text-xs text-slate-500">{idea.opponent_name}</p>
+                  <p className="text-xs text-slate-400">
+                    You {idea.user_delta >= 0 ? "+" : ""}{idea.user_delta} starter PPG · Them {idea.partner_delta >= 0 ? "+" : ""}{idea.partner_delta} starter PPG
+                  </p>
+                </div>
+                <Button variant="secondary" onClick={() => onUse(idea)}>Use offer</Button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

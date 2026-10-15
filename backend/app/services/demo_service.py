@@ -54,7 +54,8 @@ class DemoService:
         league.last_synced_at = datetime.now(UTC)
         await self.session.commit()
 
-        if isinstance(self.nfl_data, LocalFileNFLDataProvider):
-            self.nfl_data.merge(nfl_data)
+        local = self.nfl_data if isinstance(self.nfl_data, LocalFileNFLDataProvider) else getattr(self.nfl_data, "local", None)
+        if isinstance(local, LocalFileNFLDataProvider):
+            local.merge(nfl_data)
         log.info("demo.league_created", user_id=str(user_id), league_id=str(league.id))
         return league

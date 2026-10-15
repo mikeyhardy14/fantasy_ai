@@ -29,6 +29,7 @@ import type {
   ProposeTradeResult,
   RespondTradeResult,
   SuggestedTrade,
+  FindTradesResponse,
   Transaction,
   WaiverSuggestions,
   User,
@@ -229,6 +230,11 @@ export const api = {
       request<SuggestedTrade>(`/api/leagues/${leagueId}/ai/trade/for`, {
         method: "POST",
         body: JSON.stringify({ player_id: playerId }),
+      }),
+    findTrades: (leagueId: string, limit = 8) =>
+      request<FindTradesResponse>(`/api/leagues/${leagueId}/ai/trade/find`, {
+        method: "POST",
+        body: JSON.stringify({ limit }),
       }),
     reviewTrade: (leagueId: string, transactionId: string) =>
       request<TradeReview>(`/api/leagues/${leagueId}/ai/trade/review`, {
