@@ -1,3 +1,4 @@
+import asyncio
 from uuid import UUID
 
 from fastapi import APIRouter, Query
@@ -11,6 +12,7 @@ from app.api.deps import (
     Providers,
     SessionDep,
     SettingsDep,
+    StateDep,
     ToolCtx,
 )
 from app.core.errors import ProviderNotImplemented, ValidationFailed
@@ -61,14 +63,18 @@ POSITIONS = {"QB", "RB", "WR", "TE", "FLEX", "K", "DEF", "DL", "LB", "DB"}
 
 @router.get("", response_model=list[LeagueOut])
 async def list_leagues(
-    user: CurrentUser, session: SessionDep, ctx: ContextService, providers: Providers
+    user: CurrentUser,
+    session: SessionDep,
+    ctx: ContextService,
+    providers: Providers,
+    state: StateDep,
 ) -> list[LeagueOut]:
     from app.repositories import LeagueRepository
     from app.services.live_league import ensure_live
 
     leagues = await LeagueRepository(session).list_for_user(user.id)
-    for league in leagues:
-        await ensure_live(league, session, providers)
+    # Kick (or await first-time) refreshes together so N leagues do not serialize on Sleeper.
+    await asyncio.gather(*(ensure_live(lg, session, providers, db=state.db) for lg in leagues))
     return [await ctx.league_out(lg) for lg in leagues]
 
 

@@ -49,6 +49,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
             watcher.cancel()
             with suppress(asyncio.CancelledError):
                 await watcher
+        await container.providers.aclose()
         await container.db.dispose()
         log.info("app.shutdown")
 

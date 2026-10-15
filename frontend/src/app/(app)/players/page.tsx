@@ -64,7 +64,7 @@ function PlayersView({ leagueId, week }: { leagueId: string; week: number }) {
     scope: scope || undefined,
     lens: lens || undefined,
   });
-  const teamRoster = useTeam(leagueId, week);
+  const teamRoster = useTeam(leagueId);
   const needs = useNeeds(leagueId);
   const suggestions = useWaiverSuggestions(leagueId, scope === "available");
   const detail = useLeagueDetail(leagueId);
@@ -76,7 +76,6 @@ function PlayersView({ leagueId, week }: { leagueId: string; week: number }) {
       return api.leagues.addPlayer(leagueId, claim.id, dropPlayerId ?? undefined);
     },
     onSuccess: async (result) => {
-      qc.setQueryData(keys.team(leagueId, week), result.team);
       qc.setQueryData(keys.team(leagueId), result.team);
       setNotice(null);
       setClaim(null);
@@ -97,7 +96,6 @@ function PlayersView({ leagueId, week }: { leagueId: string; week: number }) {
         slot_index: choice.slotIndex,
       }),
     onSuccess: async (result) => {
-      qc.setQueryData(keys.team(leagueId, week), result.team);
       qc.setQueryData(keys.team(leagueId), result.team);
       setNotice(null);
       toast(result.message);

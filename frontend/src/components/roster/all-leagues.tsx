@@ -17,17 +17,18 @@ const REFRESH_MS = 60_000;
 
 export function AllLeagues() {
   const { leagues, loading, select } = useLeague();
+  // Omit week so the key matches sidebar/shell `keys.team(id)` / `keys.matchup(id)` ("current").
   const teams = useQueries({
     queries: leagues.map((league) => ({
-      queryKey: keys.team(league.id, league.current_week),
-      queryFn: () => api.leagues.team(league.id, league.current_week),
+      queryKey: keys.team(league.id),
+      queryFn: () => api.leagues.team(league.id),
       refetchInterval: REFRESH_MS,
     })),
   });
   const matchups = useQueries({
     queries: leagues.map((league) => ({
-      queryKey: keys.matchup(league.id, league.current_week),
-      queryFn: () => api.leagues.matchup(league.id, league.current_week),
+      queryKey: keys.matchup(league.id),
+      queryFn: () => api.leagues.matchup(league.id),
       refetchInterval: REFRESH_MS,
     })),
   });
@@ -95,7 +96,6 @@ function LeagueCard({
         slot_index: move.slotIndex,
       }),
     onSuccess: async (result) => {
-      qc.setQueryData(keys.team(league.id, league.current_week), result.team);
       qc.setQueryData(keys.team(league.id), result.team);
       setNotice(null);
       toast(result.message);
@@ -103,7 +103,7 @@ function LeagueCard({
     },
     onError: async (error) => {
       setNotice(error instanceof Error ? error.message : "Could not move that player.");
-      await qc.invalidateQueries({ queryKey: keys.team(league.id, league.current_week) });
+      await qc.invalidateQueries({ queryKey: keys.team(league.id) });
     },
   });
 

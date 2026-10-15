@@ -383,15 +383,22 @@ async def _mark_out(session, sleeper_id: str) -> None:
     from sqlalchemy.orm import selectinload
 
     from app.models import League, Player
+    from app.services.live_league import drain_background, mark_fresh
 
+    # Finish any in-flight Sleeper pull so it cannot overwrite the injury we set next.
+    await drain_background()
     players = await session.execute(select(Player).options(selectinload(Player.external_ids)))
     for player in players.scalars():
         if player.external_id_for("sleeper") == sleeper_id:
             player.injury_status = "Out"
     leagues = await session.execute(select(League))
+    league_ids = []
     for league in leagues.scalars():
         league.roster_settings = {**league.roster_settings, "reserve_allow_out": True}
+        league_ids.append(league.id)
     await session.commit()
+    for league_id in league_ids:
+        mark_fresh(league_id)
 
 
 async def test_move_between_bench_and_ir(client, auth_headers, sleeper_mock, session):

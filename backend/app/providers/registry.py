@@ -15,18 +15,21 @@ class ProviderRegistry:
     """
 
     def __init__(self, settings: Settings, *, sleeper_client: SleeperClient | None = None):
-        client = sleeper_client or SleeperClient(
+        self._sleeper_client = sleeper_client or SleeperClient(
             base_url=settings.sleeper_base_url,
             timeout=settings.sleeper_timeout_seconds,
             player_cache_path=settings.sleeper_player_cache_path,
             player_cache_ttl_seconds=settings.sleeper_player_cache_ttl_hours * 3600,
         )
         self._providers: dict[Provider, FantasyProvider] = {
-            Provider.SLEEPER: SleeperProvider(client),
+            Provider.SLEEPER: SleeperProvider(self._sleeper_client),
             Provider.YAHOO: YahooProvider(),
             Provider.ESPN: ESPNProvider(),
             Provider.NFL: NFLFantasyProvider(),
         }
+
+    async def aclose(self) -> None:
+        await self._sleeper_client.aclose()
 
     def get(self, provider: Provider | str) -> FantasyProvider:
         key = Provider(provider)

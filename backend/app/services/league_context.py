@@ -477,7 +477,14 @@ class LeagueContextService:
     async def _season_week_blobs(self, league: League, week: int) -> list[dict]:
         if self.weekly_stats is None or week < 1:
             return []
-        return list(await asyncio.gather(*(self.weekly_stats.week(league.season, item) for item in range(1, week + 1))))
+        return list(
+            await asyncio.gather(
+                *(
+                    self.weekly_stats.week(league.season, item, past=item < week)
+                    for item in range(1, week + 1)
+                )
+            )
+        )
 
     async def _points_scored(self, player: Player, league: League, blobs: list[dict]) -> tuple[float | None, int | None]:
         """Season fantasy points already scored, then games with a stat line."""
