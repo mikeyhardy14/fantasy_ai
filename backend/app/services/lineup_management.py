@@ -181,6 +181,12 @@ async def _sweep_league(state, session: AsyncSession, row: LineupManagement, app
     league = await LeagueRepository(session).get_owned(row.user_id, row.league_id)
     if league is None or not _available(league):
         return []
+    # Nobody may have opened the app for hours: plan from Sleeper and the injury report, not the saved copy.
+    from app.services.live_league import ensure_live
+
+    await ensure_live(
+        league, session, state.providers, db=state.db, wait=True, injuries=getattr(state, "injuries", None)
+    )
     context = LeagueContextService(
         session, state.nfl_data, state.weekly_stats, state.props, state.sleeper_projections
     )
