@@ -7,6 +7,8 @@ from app.schemas.ai import (
     TeamAnalysisResponse,
     SuggestTradeRequest,
     SuggestTradeResponse,
+    FindTradesRequest,
+    FindTradesResponse,
     CompareTeamsRequest,
     CompareTeamsResponse,
     TradeAnalysisRequest,
@@ -51,6 +53,11 @@ async def analyze_trade(body: TradeAnalysisRequest, tool_ctx: ToolCtx, ai: AI) -
 @router.post("/trade/for", response_model=SuggestTradeResponse)
 async def suggest_trade(body: SuggestTradeRequest, tool_ctx: ToolCtx, ai: AI) -> SuggestTradeResponse:
     return await ai.suggest_trade_for(tool_ctx, body.player_id)
+
+
+@router.post("/trade/find", response_model=FindTradesResponse)
+async def find_trades(body: FindTradesRequest, tool_ctx: ToolCtx, ai: AI) -> FindTradesResponse:
+    return await ai.find_trades(tool_ctx, limit=body.limit)
 
 
 @router.post("/trade/review", response_model=TradeReviewResponse)

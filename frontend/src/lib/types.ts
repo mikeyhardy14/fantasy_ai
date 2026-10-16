@@ -142,10 +142,31 @@ export interface PlayerSheet {
 }
 
 export interface SuggestedTrade {
-  give: { id: string; name: string; position: string | null }[];
-  receive: { id: string; name: string; position: string | null }[];
+  give: { id: string; name: string; position: string | null; points_per_game?: number | null }[];
+  receive: { id: string; name: string; position: string | null; points_per_game?: number | null }[];
   opponent_name: string;
   message: string;
+}
+
+export interface MutualTradeIdea {
+  give: { id: string; name: string; position: string | null; points_per_game?: number | null }[];
+  receive: { id: string; name: string; position: string | null; points_per_game?: number | null }[];
+  opponent_team_id: string;
+  opponent_name: string;
+  user_ppg_before: number;
+  user_ppg_after: number;
+  partner_ppg_before: number;
+  partner_ppg_after: number;
+  user_delta: number;
+  partner_delta: number;
+  message: string;
+}
+
+export interface FindTradesResponse {
+  trades: MutualTradeIdea[];
+  summary: string;
+  generated_by: string;
+  model?: string | null;
 }
 
 export interface RankingRow {

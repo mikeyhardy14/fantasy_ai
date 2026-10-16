@@ -6,7 +6,6 @@ produced here.
 """
 
 import asyncio
-import random
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +20,14 @@ from app.intelligence.roster_needs import compute_roster_needs
 from app.models import FantasyTeam, League, Player, RosterEntry, Transaction
 from app.nfl_data import NFLDataProvider, PlayerProjection, player_key
 from app.nfl_data.headshot import headshot_url
-from app.nfl_data.live import depth_for_player
+from app.nfl_data.ppg import (
+    EspnPpgClient,
+    SleeperSeasonStats,
+    SourcePpg,
+    blend_ppg,
+    project_from_ppg,
+    sleeper_source,
+)
 from app.nfl_data.props import EspnPropClient, prop_components
 from app.nfl_data.rankings import RankCandidate, build_rankings, opportunity_ids, ruled_out
 from app.nfl_data.sleeper_stats import (
@@ -31,10 +37,8 @@ from app.nfl_data.sleeper_stats import (
     score_stats,
     summarize_stats,
 )
-from app.nfl_data.usage import UsageTable, build_usage
 from app.nfl_data.vegas import explain_projection, normalize_position
 from app.nfl_data.week import board_week
-from app.nfl_data.vegas_ff import project_player, scoring_from_league, sims_for, start_sit
 from app.repositories import (
     MatchupRepository,
     PlayerRepository,
@@ -181,18 +185,21 @@ class LeagueContextService:
         weekly_stats: SleeperWeeklyStats | None = None,
         props: EspnPropClient | None = None,
         sleeper_projections: SleeperProjections | None = None,
+        sleeper_season: SleeperSeasonStats | None = None,
+        espn_ppg: EspnPpgClient | None = None,
     ):
         self.session = session
         self.nfl_data = nfl_data
         self.weekly_stats = weekly_stats
         self.props = props
         self.sleeper_projections = sleeper_projections
+        self.sleeper_season = sleeper_season
+        self.espn_ppg = espn_ppg
         self.teams = TeamRepository(session)
         self.players = PlayerRepository(session)
         self.rosters = RosterRepository(session)
         self.matchups = MatchupRepository(session)
         self.transactions = TransactionRepository(session)
-        self._usage_cache: dict[tuple[int, int], UsageTable] = {}
 
     # ---- league ---------------------------------------------------------------
 
@@ -237,36 +244,44 @@ class LeagueContextService:
     # ---- players -------------------------------------------------------------
 
     async def _week_projection(self, player: Player, league: League, week: int, on_bye: bool):
-        """Saved number, then the Vegas share model, then props, then Sleeper's published total."""
+        """Saved number, then blended Sleeper/ESPN PPG, then Sleeper's published week total."""
         key = player_key(player.name, player.position, player.nfl_team)
         projection = await self.nfl_data.get_projection(key, league.season, week)
         if projection is not None or on_bye:
             return projection
-        modeled = await self._modeled_projection(player, league, week)
-        if modeled is not None:
-            return modeled
-        if self.props is not None:
-            projection = await self.props.project_named(
-                player.name,
-                player.position,
-                league.season,
-                week,
-                league.scoring_settings or {},
-            )
-            if projection is not None:
-                return projection
-        if normalize_position(player.position) == "DEF" and player.nfl_team:
-            from_line = await self.nfl_data.project_from_line(
-                nfl_team=player.nfl_team,
-                position=player.position,
-                depth=depth_for_player(player.extra),
-                season=league.season,
-                week=week,
-                scoring=league.scoring_settings or {},
-            )
-            if from_line is not None:
-                return from_line
+        blended = await self._blended_ppg(player, league)
+        if blended is not None:
+            return project_from_ppg(blended, week)
         return await self._sleeper_projection(player, league, week)
+
+    async def _blended_ppg(self, player: Player, league: League):
+        sleeper = None
+        espn = None
+        scoring = league.scoring_settings or {}
+        if self.sleeper_season is not None:
+            sleeper_id = player.external_id_for(league.provider)
+            if sleeper_id and league.provider == "sleeper":
+                raw = await self.sleeper_season.player(league.season, sleeper_id)
+                sleeper = sleeper_source(raw, scoring)
+        if self.espn_ppg is not None:
+            espn_id = (player.extra or {}).get("espn_id")
+            if espn_id:
+                espn = await self.espn_ppg.player(league.season, str(espn_id), scoring)
+        blended = blend_ppg(sleeper, espn)
+        if blended is not None:
+            return blended
+        # Demo / local file season totals when live boards have nothing yet.
+        key = player_key(player.name, player.position, player.nfl_team)
+        stats = await self.nfl_data.get_season_stats(key, league.season)
+        if stats is None or stats.fantasy_points_per_game is None:
+            return None
+        local = SourcePpg(
+            points_per_game=float(stats.fantasy_points_per_game),
+            season_points=stats.fantasy_points,
+            games_played=stats.games_played,
+            source=stats.source or "local",
+        )
+        return blend_ppg(local, None)
 
     async def _sleeper_projection(self, player: Player, league: League, week: int) -> PlayerProjection | None:
         if self.sleeper_projections is None:
@@ -285,62 +300,6 @@ class LeagueContextService:
             note=f"{label} projection for this week.",
         )
 
-    async def _usage_table(self, league: League, week: int) -> UsageTable:
-        key = (league.season, week)
-        cached = self._usage_cache.get(key)
-        if cached is not None:
-            return cached
-        stats = self.weekly_stats
-        if stats is None or week <= 1:
-            return UsageTable()
-        blobs = await asyncio.gather(*(stats.week(league.season, past) for past in range(1, week)))
-        roster = await self.players.list_active(league.provider, ("QB", "RB", "WR", "TE"))
-        teams: dict[str, str] = {}
-        injuries: dict[str, str | None] = {}
-        positions: dict[str, str | None] = {}
-        for person in roster:
-            sleeper_id = person.external_id_for(league.provider)
-            if not sleeper_id or not person.nfl_team:
-                continue
-            teams[sleeper_id] = person.nfl_team
-            injuries[sleeper_id] = person.injury_status
-            positions[sleeper_id] = person.position
-        table = build_usage(list(zip(range(1, week), blobs, strict=True)), teams, injuries, positions)
-        self._usage_cache[key] = table
-        return table
-
-    async def _modeled_projection(self, player: Player, league: League, week: int):
-        """Share of the Vegas team total from this season's earlier games. None without that history."""
-        if self.weekly_stats is None or week <= 1 or not player.nfl_team:
-            return None
-        position = normalize_position(player.position)
-        if position not in {"QB", "RB", "WR", "TE"}:
-            return None
-        sleeper_id = player.external_id_for(league.provider)
-        if not sleeper_id:
-            return None
-        schedule = await self.nfl_data.get_schedule(player.nfl_team, league.season)
-        game = next((item for item in schedule if item.week == week and item.opponent), None)
-        if game is None or game.total is None or game.spread is None:
-            return None
-        implied = game.implied_points if game.implied_points is not None else (game.total - game.spread) / 2
-        table = await self._usage_table(league, week)
-        games = table.games.get(sleeper_id) or []
-        if not games:
-            return None
-        status = (player.injury_status or "").strip().lower()
-        return project_player(
-            position=position,
-            week=week,
-            implied=implied,
-            margin=-game.spread,
-            team_history=table.team_history.get(player.nfl_team) or {},
-            player_games=games,
-            scoring=scoring_from_league(league.scoring_settings or {}),
-            teammates_out_share=table.out_share(player.nfl_team, sleeper_id),
-            questionable=status in {"questionable", "q"},
-        )
-
     async def player_out(self, player: Player, league: League, week: int) -> PlayerOut:
         key = player_key(player.name, player.position, player.nfl_team)
         bye = await self.nfl_data.get_bye_week(player.nfl_team, league.season) if player.nfl_team else None
@@ -352,6 +311,13 @@ class LeagueContextService:
         stats = await self.nfl_data.get_season_stats(key, league.season)
         season_points = stats.fantasy_points if stats else None
         per_game = stats.fantasy_points_per_game if stats else None
+        blended = await self._blended_ppg(player, league)
+        if blended is not None:
+            per_game = blended.points_per_game
+            if blended.sleeper and blended.sleeper.season_points is not None:
+                season_points = blended.sleeper.season_points
+            elif blended.espn and blended.espn.season_points is not None and season_points is None:
+                season_points = blended.espn.season_points
         if season_points is None:
             scored, games = await self._points_scored(player, league, await self._season_week_blobs(league, week))
             if scored is not None:
@@ -1185,9 +1151,11 @@ class LeagueContextService:
 
 
 def _sim_detail(projection) -> dict[str, float]:
-    if projection is None or projection.detail.get("vegas_ff") != 1:
+    if projection is None:
         return {}
-    return {key: float(value) for key, value in projection.detail.items()}
+    if projection.detail.get("ppg_blend") == 1 or projection.source == "ppg":
+        return {key: float(value) for key, value in projection.detail.items()}
+    return {}
 
 
 def _apply_live_stat_lines(view: MatchupOut, blob: dict) -> None:
@@ -1208,10 +1176,10 @@ def _apply_live_stat_lines(view: MatchupOut, blob: dict) -> None:
 
 
 def _slot_calls(user: MatchupSideOut, opponent: MatchupSideOut | None) -> list[SlotCallOut]:
+    """Compare side-by-side starter PPG when both players have a number."""
     if opponent is None:
         return []
     by_index = {slot.slot_index: slot for slot in opponent.starters if slot.slot_index is not None}
-    rng = random.Random()
     calls: list[SlotCallOut] = []
     for slot in user.starters:
         if slot.slot_index is None or slot.player is None:
@@ -1219,17 +1187,32 @@ def _slot_calls(user: MatchupSideOut, opponent: MatchupSideOut | None) -> list[S
         other = by_index.get(slot.slot_index)
         if other is None or other.player is None:
             continue
-        left = sims_for(slot.player.projection_detail, rng=rng)
-        right = sims_for(other.player.projection_detail, rng=rng)
+        left = slot.player.points_per_game
+        if left is None:
+            left = slot.player.projected_points
+        right = other.player.points_per_game
+        if right is None:
+            right = other.player.projected_points
         if left is None or right is None:
             continue
-        result = start_sit(left, right, slot.player.name, other.player.name)
+        if left == right:
+            win_prob = 0.5
+            confidence = "coin flip"
+            start_name = slot.player.name
+        elif left > right:
+            win_prob = min(0.95, 0.5 + (left - right) / max(left + right, 1) )
+            confidence = "strong start" if win_prob >= 0.7 else "lean"
+            start_name = slot.player.name
+        else:
+            win_prob = min(0.95, 0.5 + (right - left) / max(left + right, 1))
+            confidence = "strong start" if win_prob >= 0.7 else "lean"
+            start_name = other.player.name
         calls.append(
             SlotCallOut(
                 slot_index=slot.slot_index,
-                start_name=result["start"],
-                win_prob=result["win_prob"],
-                confidence=result["confidence"],
+                start_name=start_name,
+                win_prob=round(win_prob, 3),
+                confidence=confidence,
             )
         )
     return calls

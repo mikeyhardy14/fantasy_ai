@@ -175,7 +175,46 @@ def build_snapshot() -> tuple[ImportedLeagueSnapshot, dict]:
             projections[key] = {"points": proj, "source": "demo"}
             games = 3
             total = round(sum(max(0.0, rng.gauss(base, spread * 0.4)) for _ in range(games)), 1)
-            season_stats[key] = {"games_played": games, "fantasy_points": total, "source": "demo"}
+            season_stats[key] = {
+                "games_played": games,
+                "fantasy_points": total,
+                "fantasy_points_per_game": round(total / games, 1) if games else None,
+                "source": "demo",
+            }
+
+    # Build a clear mutual trade: user has RB depth team 2 needs, and team 2 has
+    # WR depth the user needs. PPG overrides keep those players off each side's
+    # current optimal starters so the swap lifts both lineups.
+    trade_rb = rbs[0][2]
+    trade_wr = wrs[1][2]
+    user_wr_weak = wrs[0][1]
+    for player, ppg in (
+        (rbs[0][0], 18.0),
+        (rbs[0][1], 16.5),
+        (wrs[0][0], 17.0),
+        (user_wr_weak, 9.5),
+        (wrs[0][2], 15.5),
+        (trade_rb, 13.5),
+        (rbs[0][3], 6.0),
+        (rbs[1][0], 17.5),
+        (rbs[1][1], 8.0),
+        (rbs[1][2], 7.0),
+        (rbs[1][3], 6.5),
+        (wrs[1][0], 16.0),
+        (wrs[1][1], 14.5),
+        (trade_wr, 14.0),
+        (wrs[1][3], 13.8),
+        (wrs[1][4], 13.5),
+    ):
+        key = player_key(player.name, player.position, player.nfl_team)
+        season_stats[key] = {
+            "games_played": 4,
+            "fantasy_points": round(ppg * 4, 1),
+            "fantasy_points_per_game": ppg,
+            "source": "demo",
+        }
+        projections[key] = {"points": ppg, "source": "demo"}
+
     news[player_key(user_wr2.name, "WR", user_wr2.nfl_team)] = [
         {"headline": f"{user_wr2.name} limited in practice with hamstring tightness", "published_at": "2026-09-23", "source": "demo"}
     ]

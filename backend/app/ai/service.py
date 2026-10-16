@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from app.ai import fallback, prompts
 from app.ai.trade_offer import offer_message, pick_give
+from app.ai.trade_finder import find_mutual_ppg_trades
 from app.ai.agent import Agent
 from app.ai.approvals import swaps_mentioned
 from app.ai.llm import LLMClient
@@ -42,6 +43,8 @@ from app.schemas.ai import (
     TeamAnalysisResponse,
     CompareTeamsResponse,
     SuggestTradeResponse,
+    FindTradesResponse,
+    MutualTradeIdea,
     TradeAnalysis,
     TradeAnalysisRequest,
     TradeAnalysisResponse,
@@ -313,12 +316,108 @@ class AIService:
                 give, message = drafted
                 generated_by = self._generated_by()
         return SuggestTradeResponse(
-            give=[TradeSidePlayer(id=player.id, name=player.name, position=player.position) for player in give],
-            receive=[TradeSidePlayer(id=target.id, name=target.name, position=target.position)],
+            give=[
+                TradeSidePlayer(
+                    id=player.id,
+                    name=player.name,
+                    position=player.position,
+                    points_per_game=player.points_per_game,
+                )
+                for player in give
+            ],
+            receive=[
+                TradeSidePlayer(
+                    id=target.id,
+                    name=target.name,
+                    position=target.position,
+                    points_per_game=target.points_per_game,
+                )
+            ],
             opponent_name=owner.team_name,
             message=message,
             generated_by=generated_by,
         )
+
+    async def find_trades(self, ctx: ToolContext, *, limit: int = 8) -> FindTradesResponse:
+        """Scan the league for 1-for-1 swaps that raise starter PPG for both sides."""
+        rosters = await ctx.service.league_rosters(ctx.league, ctx.week)
+        user = next((team for team in rosters if team.team.is_user_team), None)
+        if user is None:
+            raise ValidationFailed("We could not find your team in this league.")
+        opponents = [team for team in rosters if not team.team.is_user_team]
+        ideas = find_mutual_ppg_trades(user, opponents, limit=limit)
+        trades = [
+            MutualTradeIdea(
+                give=[
+                    TradeSidePlayer(
+                        id=player.id,
+                        name=player.name,
+                        position=player.position,
+                        points_per_game=player.points_per_game,
+                    )
+                    for player in idea.give
+                ],
+                receive=[
+                    TradeSidePlayer(
+                        id=player.id,
+                        name=player.name,
+                        position=player.position,
+                        points_per_game=player.points_per_game,
+                    )
+                    for player in idea.receive
+                ],
+                opponent_team_id=idea.opponent_team_id,
+                opponent_name=idea.opponent_name,
+                user_ppg_before=idea.user_ppg_before,
+                user_ppg_after=idea.user_ppg_after,
+                partner_ppg_before=idea.partner_ppg_before,
+                partner_ppg_after=idea.partner_ppg_after,
+                user_delta=idea.user_delta,
+                partner_delta=idea.partner_delta,
+                message=idea.message,
+            )
+            for idea in ideas
+        ]
+        if not trades:
+            summary = (
+                "No trades raise starter PPG for both sides right now. "
+                "Try again after more games are scored or when a roster has clearer surplus."
+            )
+            return FindTradesResponse(trades=[], summary=summary, generated_by="deterministic")
+
+        noun = "upgrade" if len(trades) == 1 else "upgrades"
+        verb = "helps" if len(trades) == 1 else "help"
+        summary = f"Found {len(trades)} mutual PPG {noun} that {verb} both starting lineups."
+        generated_by = "deterministic"
+        model = None
+        if self.enabled:
+            narrated = await self._narrate_trade_finds(ctx, trades, summary)
+            if narrated is not None:
+                summary = narrated
+                generated_by = self._generated_by()
+                model = getattr(self.llm, "model", None)
+        return FindTradesResponse(trades=trades, summary=summary, generated_by=generated_by, model=model)
+
+    async def _narrate_trade_finds(self, ctx: ToolContext, trades: list[MutualTradeIdea], summary: str) -> str | None:
+        assert self.llm is not None
+        facts = {
+            "summary": summary,
+            "trades": [trade.model_dump(mode="json") for trade in trades[:6]],
+        }
+        try:
+            result = await self.llm.complete(
+                [
+                    await self._system(ctx),
+                    {"role": "system", "content": prompts.TRADE_FIND_INSTRUCTIONS},
+                    {"role": "user", "content": f"Mutual trade facts:\n{facts}"},
+                ],
+                temperature=0.2,
+            )
+            text = (result.content or "").strip()
+            return text or None
+        except Exception as exc:  # noqa: BLE001 - deterministic summary still stands
+            log.warning("ai.trade_find_failed", error=str(exc))
+            return None
 
     async def _draft_offer(self, ctx, target, opponent_name: str, roster):
         assert self.llm is not None

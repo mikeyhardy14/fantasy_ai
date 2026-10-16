@@ -106,6 +106,11 @@ injuries, byes, lineup impact and projections when available. Verdict must be on
 ACCEPT, REJECT, NEGOTIATE, UNCLEAR (use UNCLEAR when key data is missing). List data gaps.
 """
 
+TRADE_FIND_INSTRUCTIONS = """Rewrite the mutual-trade summary in two or three short sentences.
+Use only the PPG deltas and player names in the facts. Do not invent new trades or claim an
+offer was sent. Mention that both sides gain starter PPG.
+"""
+
 WAIVER_INSTRUCTIONS = """Suggest this week's waiver and free-agent adds for the user's team.
 
 Call get_roster_needs, get_recommendations, get_roster, and get_available_players for each

@@ -1,6 +1,6 @@
 """Weekly player ranks from the posted line and this league's roster.
 
-Points are the Vegas usage model when the player has earlier games, otherwise a
+Points are blended Sleeper/ESPN season PPG when available, otherwise a
 saved projection or the DraftKings prop. Value is those points minus the
 replacement starter. Players on bye or ruled out are left off.
 """

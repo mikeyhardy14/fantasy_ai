@@ -1,6 +1,6 @@
 """NFL data that prefers the local file, then the ESPN scoreboard.
 
-A projection written into the local file (the demo league) always wins. Vegas
+A projection written into the local file (the demo league) always wins. PPG
 is only used when that file has nothing for the player. Bye weeks and opponents
 in the file also win, so the demo seed stays stable.
 """
