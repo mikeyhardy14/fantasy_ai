@@ -25,6 +25,7 @@ from app.services.sync_service import SyncService
 
 if TYPE_CHECKING:
     from app.db.session import Database
+    from app.nfl_data.injuries import EspnInjuryClient
 
 log = get_logger(__name__)
 
@@ -41,6 +42,7 @@ async def ensure_live(
     *,
     db: Database | None = None,
     wait: bool = False,
+    injuries: EspnInjuryClient | None = None,
 ) -> None:
     """Refresh the league from Sleeper.
 
@@ -55,7 +57,7 @@ async def ensure_live(
 
     # Already imported once: serve the DB copy and refresh Sleeper off the request path.
     if league.last_synced_at is not None and db is not None and not wait:
-        _schedule_background(league.id, providers, db)
+        _schedule_background(league.id, providers, db, injuries)
         return
 
     lock = _locks.setdefault(key, asyncio.Lock())
@@ -70,10 +72,10 @@ async def ensure_live(
                 owned = await _load_league(own_session, league.id)
                 if owned is None:
                     return
-                await _refresh_blocking(owned, own_session, providers)
+                await _refresh_blocking(owned, own_session, providers, injuries)
             await session.refresh(league)
         else:
-            await _refresh_blocking(league, session, providers)
+            await _refresh_blocking(league, session, providers, injuries)
         _fresh[key] = time.monotonic()
 
 
@@ -105,7 +107,9 @@ async def _load_league(session: AsyncSession, league_id: UUID) -> League | None:
     return result.unique().scalar_one_or_none()
 
 
-def _schedule_background(league_id: UUID, providers: ProviderRegistry, db: Database) -> None:
+def _schedule_background(
+    league_id: UUID, providers: ProviderRegistry, db: Database, injuries: EspnInjuryClient | None = None
+) -> None:
     key = str(league_id)
     existing = _background.get(key)
     if existing is not None and not existing.done():
@@ -121,7 +125,7 @@ def _schedule_background(league_id: UUID, providers: ProviderRegistry, db: Datab
                     league = await _load_league(bg_session, league_id)
                     if league is None:
                         return
-                    await _refresh_blocking(league, bg_session, providers)
+                    await _refresh_blocking(league, bg_session, providers, injuries)
                 _fresh[key] = time.monotonic()
             except Exception as exc:  # noqa: BLE001 - never fail the user request path
                 log.warning("league.live_refresh_failed", league_id=key, error=str(exc))
@@ -132,14 +136,17 @@ def _schedule_background(league_id: UUID, providers: ProviderRegistry, db: Datab
 
 
 async def _refresh_blocking(
-    league: League, session: AsyncSession, providers: ProviderRegistry
+    league: League,
+    session: AsyncSession,
+    providers: ProviderRegistry,
+    injuries: EspnInjuryClient | None = None,
 ) -> None:
     try:
         adapter = providers.get(league.provider)
     except ProviderNotImplemented:
         return
     try:
-        await SyncService(session).refresh_live(league, adapter)
+        await SyncService(session, injuries).refresh_live(league, adapter)
     except Exception as exc:  # noqa: BLE001 - serve the last good league if Sleeper blips
         await session.rollback()
         await session.refresh(league)

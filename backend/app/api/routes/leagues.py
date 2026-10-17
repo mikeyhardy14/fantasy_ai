@@ -75,7 +75,9 @@ async def list_leagues(
 
     leagues = await LeagueRepository(session).list_for_user(user.id)
     # Kick (or await first-time) refreshes together so N leagues do not serialize on Sleeper.
-    await asyncio.gather(*(ensure_live(lg, session, providers, db=state.db) for lg in leagues))
+    await asyncio.gather(
+        *(ensure_live(lg, session, providers, db=state.db, injuries=state.injuries) for lg in leagues)
+    )
     return [await ctx.league_out(lg) for lg in leagues]
 
 
@@ -415,7 +417,7 @@ async def get_briefing(tool_ctx: ToolCtx, ai: AI) -> WeeklyBriefing:
 
 @router.post("/{league_id}/sync", response_model=SyncResponse)
 async def sync_league(
-    league: OwnedLeague, session: SessionDep, providers: Providers, ctx: ContextService
+    league: OwnedLeague, session: SessionDep, providers: Providers, ctx: ContextService, state: StateDep
 ) -> SyncResponse:
     if league.provider == Provider.DEMO.value:
         from app.services.demo_service import DemoService
@@ -426,5 +428,5 @@ async def sync_league(
         adapter = providers.get(league.provider)
     except ProviderNotImplemented:
         raise
-    await SyncService(session).sync_league(league, adapter)
+    await SyncService(session, state.injuries).sync_league(league, adapter)
     return SyncResponse(league=await ctx.league_out(league), message="League synced.")

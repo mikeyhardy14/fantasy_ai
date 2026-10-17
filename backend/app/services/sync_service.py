@@ -13,6 +13,7 @@ from app.core.logging import get_logger
 from app.domain.enums import SyncStatus
 from app.domain.provider_models import ImportedLeagueSnapshot, PlayerData
 from app.models import League, Player
+from app.nfl_data.injuries import EspnInjuryClient, apply_injury_reports
 from app.providers.base import FantasyProvider
 from app.repositories import (
     MatchupRepository,
@@ -26,8 +27,9 @@ log = get_logger(__name__)
 
 
 class SyncService:
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, injuries: EspnInjuryClient | None = None):
         self.session = session
+        self.injuries = injuries
         self.teams = TeamRepository(session)
         self.players = PlayerRepository(session)
         self.rosters = RosterRepository(session)
@@ -43,7 +45,8 @@ class SyncService:
             snapshot = await provider.fetch_league_snapshot(
                 league.external_league_id, weeks_back=17, weeks_forward=17
             )
-            await self.apply_snapshot(league, snapshot)
+            players = await self.apply_snapshot(league, snapshot)
+            await self._overlay_injuries(players.values())
             league.sync_status = SyncStatus.SUCCESS
             league.sync_error = None
             league.last_synced_at = datetime.now(UTC)
@@ -62,7 +65,8 @@ class SyncService:
     async def refresh_live(self, league: League, provider: FantasyProvider) -> None:
         """Pull the current league from the provider. Players already stored stay; rostered ones update."""
         snapshot = await provider.fetch_league_snapshot(league.external_league_id)
-        await self.apply_snapshot(league, snapshot, referenced_only=True)
+        players = await self.apply_snapshot(league, snapshot, referenced_only=True)
+        await self._overlay_injuries(players.values())
         now = datetime.now(UTC)
         league.last_synced_at = now
         league.sync_status = SyncStatus.SUCCESS
@@ -70,9 +74,19 @@ class SyncService:
         league.fantasy_account.last_synced_at = now
         await self.session.commit()
 
+    async def _overlay_injuries(self, players) -> None:
+        """Sleeper's catalogue is a day old at worst; ESPN's report is minutes old."""
+        if self.injuries is None:
+            return
+        reports = await self.injuries.reports()
+        if reports:
+            changed = apply_injury_reports(players, reports)
+            if changed:
+                log.info("sync.injuries_updated", changed=changed)
+
     async def apply_snapshot(
         self, league: League, snapshot: ImportedLeagueSnapshot, *, referenced_only: bool = False
-    ) -> None:
+    ) -> dict[str, Player]:
         provider = snapshot.provider.value
         details = snapshot.league
 
@@ -208,3 +222,4 @@ class SyncService:
                 },
             )
         await self.session.flush()
+        return players_by_ext

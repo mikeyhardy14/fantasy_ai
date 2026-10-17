@@ -21,6 +21,7 @@ from app.db.session import Database
 from app.models import League, User
 from app.nfl_data import LocalFileNFLDataProvider, NFLDataProvider
 from app.nfl_data.espn import ESPNScheduleClient
+from app.nfl_data.injuries import EspnInjuryClient
 from app.nfl_data.live import LiveNFLDataProvider
 from app.nfl_data.props import EspnPropClient
 from app.nfl_data.sleeper_stats import SleeperProjections, SleeperWeeklyStats
@@ -55,7 +56,9 @@ class AppState:
         self.weekly_stats: SleeperWeeklyStats | None = None
         self.props: EspnPropClient | None = None
         self.sleeper_projections: SleeperProjections | None = None
+        self.injuries: EspnInjuryClient | None = None
         if settings.environment != "test":
+            self.injuries = EspnInjuryClient()
             self.weekly_stats = SleeperWeeklyStats(settings.espn_schedule_cache_dir, settings.sleeper_base_url)
             self.props = EspnPropClient(settings.espn_schedule_cache_dir, settings.sleeper_player_cache_path)
             self.sleeper_projections = SleeperProjections(settings.espn_schedule_cache_dir, settings.sleeper_base_url)
@@ -139,7 +142,7 @@ async def _owned_league(
         raise NotFoundError("League not found.")
     from app.services.live_league import ensure_live
 
-    await ensure_live(league, session, providers, db=state.db, wait=wait)
+    await ensure_live(league, session, providers, db=state.db, wait=wait, injuries=state.injuries)
     return league
 
 

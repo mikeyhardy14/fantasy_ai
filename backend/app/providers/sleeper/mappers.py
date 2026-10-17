@@ -249,5 +249,7 @@ def map_player(player_id: str, raw: dict[str, Any]) -> PlayerData:
             "practice_participation": raw.get("practice_participation"),
             "injury_notes": raw.get("injury_notes"),
             "espn_id": str(raw["espn_id"]) if raw.get("espn_id") else None,
+            # Milliseconds; lets a newer ESPN injury report win over an older Sleeper label.
+            "news_updated": raw.get("news_updated"),
         },
     )
