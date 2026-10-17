@@ -10,7 +10,7 @@ import type { ChatMessage, LineupAction, RosterClaim } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Send } from "lucide-react";
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { FacedMarkdown, MentionText } from "@/components/player/player-mentions";
 import { useToast } from "@/components/shell/toast";
 import { Button } from "@/components/ui/button";
@@ -50,6 +50,16 @@ export function Chat({ leagueId, aiEnabled, dock = false }: { leagueId: string; 
   const [suggestions, setSuggestions] = useState<string[]>(STARTERS);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Where the caret goes once a picked @mention is in the box. Set in a layout
+  // effect, not a later frame, so the next keystroke can't land before it.
+  const pendingCaret = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const caret = pendingCaret.current;
+    if (caret == null) return;
+    pendingCaret.current = null;
+    inputRef.current?.focus();
+    inputRef.current?.setSelectionRange(caret, caret);
+  }, [input]);
   const mention = activeMention(input, cursor);
   const mentionQuery = mention && !mentionIsComplete(mention.query, teams) ? mention : null;
   const matches = mentionQuery && mentionsOpen ? filterTeams(teams, mentionQuery.query) : [];
@@ -105,10 +115,7 @@ export function Chat({ leagueId, aiEnabled, dock = false }: { leagueId: string; 
     setInput(next.text);
     setCursor(next.cursor);
     setMentionsOpen(false);
-    requestAnimationFrame(() => {
-      inputRef.current?.focus();
-      inputRef.current?.setSelectionRange(next.cursor, next.cursor);
-    });
+    pendingCaret.current = next.cursor;
   }
 
   function onInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {

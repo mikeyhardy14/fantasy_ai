@@ -184,6 +184,9 @@ describe("Chat subs", () => {
 
   it("mentions another team with @ and sends that team's id", async () => {
     Element.prototype.scrollIntoView = vi.fn();
+    // Hold animation frames so a test can run one late, like a slow phone painting after the next keystroke.
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (frame: FrameRequestCallback) => frames.push(frame));
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (String(url).includes("/standings")) {
         return jsonResponse([
@@ -215,7 +218,9 @@ describe("Chat subs", () => {
     expect(screen.queryByRole("option", { name: /Mike's Marauders/ })).not.toBeInTheDocument();
     await user.click(option);
     expect(box).toHaveValue("@Touchdown Titans ");
-    await user.type(box, "who should I target?");
+    await user.type(box, "w");
+    frames.splice(0).forEach((frame) => frame(0));
+    await user.keyboard("ho should I target?");
     await user.click(screen.getByRole("button", { name: "Send" }));
     expect(await screen.findByText("They start Rex.")).toBeInTheDocument();
     expect(screen.getByTestId("msg-user")).toHaveTextContent("@Touchdown Titans who should I target?");
